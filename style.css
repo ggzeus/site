@@ -190,3 +190,213 @@ body {
     flex: 1;
     padding: 40px;
 }
+
+/* --- Estilos da Dashboard Dinâmica --- */
+
+/* Grid de Produtos */
+.products-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+/* Card Base */
+.product-card {
+    background-color: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+    transition: transform 0.3s, border-color 0.3s;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Efeito ao passar o mouse no card ativo */
+.product-card:not(.locked):hover {
+    transform: translateY(-5px);
+    border-color: #ff2400;
+    box-shadow: 0 5px 15px rgba(255, 36, 0, 0.2);
+}
+
+/* Imagem do Produto (Metade do card) */
+.card-image {
+    height: 150px;
+    background: linear-gradient(45deg, #222, #444); /* Placeholder genérico */
+    position: relative;
+    width: 100%;
+}
+
+/* Sombra preta com nome no topo esquerdo */
+.card-title-overlay {
+    position: absolute;
+    top: 10px;
+    left: 0;
+    background: rgba(0, 0, 0, 0.9);
+    padding: 5px 15px;
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.9rem;
+    border-right: 2px solid #ff2400;
+    box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
+}
+
+/* Detalhes do Produto */
+.card-details {
+    padding: 15px;
+    font-size: 0.85rem;
+    color: #ccc;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.status-active {
+    color: #00ff00;
+    font-weight: bold;
+}
+
+.label {
+    color: #777;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+}
+
+/* Botão de Download (Para quem tem licença) */
+.download-btn {
+    margin-top: auto;
+    background: #222;
+    border: 1px solid #ff2400;
+    color: #ff2400;
+    padding: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: 0.2s;
+}
+
+.download-btn:hover {
+    background: #ff2400;
+    color: white;
+}
+
+/* --- Lógica de Bloqueio (Sem Licença) --- */
+.product-card.locked {
+    filter: grayscale(100%);
+    opacity: 0.6;
+    cursor: pointer;
+}
+
+/* Overlay de Compra (Escondido por padrão) */
+.locked-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    opacity: 0;
+    transition: opacity 0.3s;
+    z-index: 10;
+}
+
+/* Mostrar Overlay ao passar o mouse no card bloqueado */
+.product-card.locked:hover .locked-overlay {
+    opacity: 1;
+}
+
+.product-card.locked:hover {
+    opacity: 1; /* Remove transparência para focar no botão */
+    border-color: #ff2400;
+}
+
+.buy-btn {
+    background: #ff2400;
+    color: white;
+    border: none;
+    padding: 12px 25px;
+    font-weight: bold;
+    font-size: 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    box-shadow: 0 0 10px #ff2400;
+}
+
+.buy-btn:hover {
+    transform: scale(1.1);
+}
+
+/* --- Animações de Desbloqueio --- */
+
+/* O ícone do cadeado que vai aparecer no overlay */
+.lock-icon-anim {
+    font-size: 3rem;
+    color: #fff;
+    margin-bottom: 15px;
+    transition: 0.3s;
+}
+
+/* Animação 1: Cadeado Tremendo (Tensão) */
+@keyframes lockShake {
+    0% { transform: rotate(0deg); }
+    25% { transform: rotate(-15deg); }
+    50% { transform: rotate(15deg); }
+    75% { transform: rotate(-15deg); }
+    100% { transform: rotate(0deg); }
+}
+
+/* Animação 2: Cadeado Caindo (Quebrando) */
+@keyframes lockFall {
+    0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+    30% { transform: translateY(-20px) rotate(0deg); opacity: 1; } /* Pulo leve pra cima */
+    100% { transform: translateY(200px) rotate(45deg); opacity: 0; } /* Cai sumindo */
+}
+
+/* Animação 3: O Card Brilhando (Poder) */
+@keyframes cardGlow {
+    0% { box-shadow: 0 0 0 rgba(255, 36, 0, 0); border-color: #333; }
+    50% { box-shadow: 0 0 40px rgba(255, 36, 0, 0.8); border-color: #ff2400; transform: scale(1.02); }
+    100% { box-shadow: 0 0 10px rgba(255, 36, 0, 0.2); border-color: #ff2400; transform: scale(1); }
+}
+
+/* Classes que o JS vai adicionar */
+.shaking .lock-icon-anim {
+    animation: lockShake 0.3s infinite;
+    color: #ff2400; /* Fica vermelho antes de quebrar */
+}
+
+.falling .lock-icon-anim {
+    animation: lockFall 0.8s forwards;
+}
+
+.glowing-card {
+    animation: cardGlow 1.5s forwards;
+    filter: grayscale(0%) !important; /* Remove o preto e branco */
+    opacity: 1 !important;
+}
+
+/* Modal de Parabéns */
+.success-modal {
+    position: fixed;
+    top: -100px; /* Começa escondido lá em cima */
+    left: 50%;
+    transform: translateX(-50%);
+    background: #111;
+    border: 2px solid #ff2400;
+    padding: 20px 40px;
+    z-index: 2000;
+    box-shadow: 0 0 30px rgba(255, 36, 0, 0.5);
+    border-radius: 8px;
+    text-align: center;
+    transition: top 0.5s ease-out;
+}
+
+.success-modal h3 {
+    color: #ff2400;
+    margin: 0 0 10px 0;
+    text-transform: uppercase;
+}
