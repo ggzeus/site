@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scarlet</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <nav class="navbar">
+        <div class="logo">
+            <i class="fa-solid fa-bolt"></i> SCARLET
+        </div>
+        <div class="nav-buttons" id="authButtons">
+            <button onclick="showModal('login')">Login</button>
+            <button onclick="showModal('register')" class="btn-outline">Registrar</button>
+        </div>
+        <div class="nav-buttons" id="userMenu" style="display: none;">
+            <span id="welcomeUser"></span>
+            <button onclick="logout()" class="btn-outline">Sair</button>
+        </div>
+    </nav>
+
+    <main id="homeSection">
+        <div class="hero">
+            <h1>DOMINE O JOGO</h1>
+            <p>Scarlet é a solução definitiva. Performance, segurança e invisibilidade em um só lugar.</p>
+            <button class="cta-button">SAIBA MAIS</button>
+        </div>
+    </main>
+
+    <div id="dashboardSection" style="display: none;">
+        <div class="dash-container">
+            <aside class="sidebar">
+                <h3>Documentação</h3>
+                <ul>
+                    <li><i class="fa-solid fa-book"></i> Introdução</li>
+                    <li><i class="fa-solid fa-download"></i> Instalação</li>
+                    <li><i class="fa-solid fa-gear"></i> Configuração</li>
+                </ul>
+            </aside>
+            <div class="content">
+                <h2>Bem-vindo ao Scarlet</h2>
+                <p>Selecione um tópico no menu lateral para começar.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="authModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h2 id="modalTitle">Login</h2>
+            <form id="authForm">
+                <div class="input-group">
+                    <i class="fa-solid fa-user"></i>
+                    <input type="text" id="username" placeholder="Usuário" required>
+                </div>
+                <div class="input-group">
+                    <i class="fa-solid fa-lock"></i>
+                    <input type="password" id="password" placeholder="Senha" required>
+                </div>
+                <button type="submit" id="submitBtn">Entrar</button>
+            </form>
+            <p id="msg"></p>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
