@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scarlet</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <nav class="navbar">
+        <div class="logo">
+            <i class="fa-solid fa-bolt"></i> SCARLET
+        </div>
+        <div class="nav-buttons" id="authButtons">
+            <button onclick="showModal('login')">Login</button>
+            <button onclick="showModal('register')" class="btn-outline">Registrar</button>
+        </div>
+        <div class="nav-buttons" id="userMenu" style="display: none;">
+            <span id="welcomeUser"></span>
+            <button onclick="logout()" class="btn-outline">Sair</button>
+        </div>
+    </nav>
+
+    <main id="homeSection">
+        <div class="hero">
+            <h1>DOMINE O JOGO</h1>
+            <p>Scarlet é a solução definitiva. Performance, segurança e invisibilidade em um só lugar.</p>
+            <button class="cta-button">SAIBA MAIS</button>
+        </div>
+    </main>
+
+    <div id="dashboardSection" style="display: none;">
+        <div class="dash-container">
+            <aside class="sidebar">
+                <h3>Navegação</h3>
+                <ul>
+                    <li onclick="loadDashContent('intro')" class="active-tab"><i class="fa-solid fa-book"></i>
+                        Introdução</li>
+                    <li onclick="loadDashContent('promo')"><i class="fa-solid fa-tag"></i> Promotion</li>
+                    <li onclick="loadDashContent('addons')"><i class="fa-solid fa-box-open"></i> Conteúdos Adicionais
+                    </li>
+                    <li onclick="loadDashContent('install')"><i class="fa-solid fa-download"></i> Instalação (Produtos)
+                    </li>
+                    <li onclick="loadDashContent('config')"><i class="fa-solid fa-gear"></i> Configuração</li>
+                    <li onclick="loadDashContent('admin')" id="adminTab" style="display: none; color: #ff4444;"><i
+                            class="fa-solid fa-user-secret"></i> Painel Zeus</li>
+                </ul>
+            </aside>
+
+            <div class="content" id="dashDynamicContent">
+            </div>
+        </div>
+    </div>
+
+    <!-- Auth Modal -->
+    <div id="authModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h2 id="modalTitle">Login</h2>
+            <form id="authForm">
+                <div class="input-group">
+                    <i class="fa-solid fa-user"></i>
+                    <input type="text" id="username" placeholder="Usuário" required>
+                </div>
+                <div class="input-group" id="emailGroup" style="display: none;">
+                    <i class="fa-solid fa-envelope"></i>
+                    <input type="email" id="email" placeholder="Email" required>
+                </div>
+                <div class="input-group">
+                    <i class="fa-solid fa-lock"></i>
+                    <input type="password" id="password" placeholder="Senha" required>
+                </div>
+                <button type="submit" id="submitBtn">Entrar</button>
+            </form>
+            <p id="msg"></p>
+        </div>
+    </div>
+
+    <!-- Payment Modal -->
+    <div id="paymentModal" class="modal" style="z-index: 2000;">
+        <div class="modal-content" style="text-align: center; max-width: 400px;">
+            <span class="close" onclick="closePaymentModal()">&times;</span>
+            <h2><i class="fa-brands fa-pix" style="color: #00bd9d;"></i> Pagamento PIX</h2>
+            <p style="font-size: 0.9rem; color: #ccc;">Escaneie o QR Code ou copie o código abaixo para liberar seu
+                acesso.</p>
+
+            <div style="background: white; padding: 10px; display: inline-block; margin: 15px 0; border-radius: 8px;">
+                <img id="pixQrImg" src="" alt="QR Code PIX" style="width: 200px; height: 200px; display: block;">
+            </div>
+
+            <div class="input-group">
+                <input type="text" id="pixCopyPaste" readonly style="font-size: 0.8rem; color: #aaa;"
+                    onclick="this.select()">
+                <button onclick="copyPixCode()" style="padding: 5px 10px; margin-left: 5px;"><i
+                        class="fa-regular fa-copy"></i></button>
+            </div>
+
+            <button class="cta-button" onclick="verifyPayment()"
+                style="width: 100%; margin-top: 15px; background: #00bd9d;">CONFIRMAR PAGAMENTO</button>
+            <p id="paymentStatus" style="margin-top: 10px; font-size: 0.8rem;"></p>
+        </div>
+    </div>
+
+    <!-- Plan Selection Modal -->
+    <div id="planModal" class="modal" style="z-index: 2100;">
+        <div class="modal-content" style="text-align: center; max-width: 600px;">
+            <span class="close" onclick="closePlanModal()">&times;</span>
+            <h2><i class="fa-solid fa-tags" style="color: var(--primary-color);"></i> Escolha seu Plano</h2>
+            <p style="font-size: 0.9rem; color: #ccc; margin-bottom: 20px;">Selecione o plano que melhor se adequa às
+                suas necessidades.</p>
+
+            <div id="plansContainer" class="plans-grid">
+                <!-- Planos serão inseridos aqui via JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <div id="successToast" class="success-modal">
+        <h3><i class="fa-solid fa-trophy"></i> Parabéns!</h3>
+        <p id="successMsg">Você resgatou o produto com sucesso.</p>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
