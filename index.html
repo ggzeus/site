@@ -5,7 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scarlet</title>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Montserrat:wght@300;400;600;700&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
 </head>
@@ -14,7 +16,6 @@
 
     <nav class="navbar">
         <div class="logo">
-            <i class="fa-solid fa-bolt"></i> SCARLET
         </div>
         <div class="nav-buttons" id="authButtons">
             <button onclick="showModal('login')">Login</button>
@@ -41,7 +42,7 @@
                 <ul>
                     <li onclick="loadDashContent('intro')" class="active-tab"><i class="fa-solid fa-book"></i>
                         Introdução</li>
-                    <li onclick="loadDashContent('promo')"><i class="fa-solid fa-tag"></i> Promotion</li>
+                    <li onclick="loadDashContent('promo')"><i class="fa-solid fa-users"></i> Community</li>
                     <li onclick="loadDashContent('addons')"><i class="fa-solid fa-box-open"></i> Conteúdos Adicionais
                     </li>
                     <li onclick="loadDashContent('install')"><i class="fa-solid fa-download"></i> Instalação (Produtos)
@@ -49,6 +50,8 @@
                     <li onclick="loadDashContent('config')"><i class="fa-solid fa-gear"></i> Configuração</li>
                     <li onclick="loadDashContent('admin')" id="adminTab" style="display: none; color: #ff4444;"><i
                             class="fa-solid fa-user-secret"></i> Painel Zeus</li>
+                    <li onclick="loadDashContent('docs')" id="developerTab" style="display: none; color: #00bcd4;"><i
+                            class="fa-solid fa-code"></i> Documentação</li>
                 </ul>
             </aside>
 
@@ -120,11 +123,26 @@
         </div>
     </div>
 
+    <!-- Docs/Fix Errors Modal -->
+    <div id="docsModal" class="modal" style="z-index: 2200;">
+        <div class="modal-content" style="max-width: 800px; width: 90%; max-height: 85vh; overflow-y: auto;">
+            <span class="close" onclick="closeDocsModal()">&times;</span>
+            <h2 style="border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 15px; margin-bottom: 20px;">
+                <i class="fa-solid fa-book-medical" style="color: var(--primary-color);"></i> Soluções de Erros
+            </h2>
+            <div id="docsList" class="docs-list">
+                <!-- Itens serão inseridos via JS -->
+            </div>
+        </div>
+    </div>
+
     <div id="successToast" class="success-modal">
         <h3><i class="fa-solid fa-trophy"></i> Parabéns!</h3>
         <p id="successMsg">Você resgatou o produto com sucesso.</p>
     </div>
 
+    <div id="notification-container" class="notification-container"></div>
+    <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>
 </body>
 
