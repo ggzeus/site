@@ -1,0 +1,12 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow read/write access on all documents to any user signed in to the application
+    // WARNING: using service accounts bypasses these rules, but for client access (if any), these are needed.
+    // Ideally, lock this down. Since we access via Admin SDK in server.js, these rules technically don't apply to the server,
+    // but useful if we ever add client-side logic.
+    match /{document=**} {
+      allow read, write: if true; // Open for now to avoid issues, recommend locking down later.
+    }
+  }
+}

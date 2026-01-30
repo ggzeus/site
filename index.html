@@ -21,9 +21,17 @@
             <button onclick="showModal('login')">Login</button>
             <button onclick="showModal('register')" class="btn-outline">Registrar</button>
         </div>
-        <div class="nav-buttons" id="userMenu" style="display: none;">
-            <span id="welcomeUser"></span>
-            <button onclick="logout()" class="btn-outline">Sair</button>
+        <div class="user-profile-card" id="userMenu" style="display: none;">
+            <div class="profile-pic-container">
+                 <img id="userProfilePic" src="https://cdn.discordapp.com/embed/avatars/0.png" alt="Profile">
+            </div>
+            <div class="user-info">
+                <span id="welcomeUser" class="user-name"></span>
+                <span id="userRole" class="user-role">Cliente</span>
+            </div>
+            <button onclick="logout()" class="logout-btn" title="Sair">
+                <i class="fa-solid fa-right-from-bracket"></i>
+            </button>
         </div>
     </nav>
 

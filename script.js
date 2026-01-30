@@ -156,10 +156,51 @@ document.getElementById('authForm').addEventListener('submit', async (e) => {
     }
 });
 
+function updateUserProfileUI(user) {
+    if (!user) return;
+
+    // Update Username
+    const welcomeEl = document.getElementById('welcomeUser');
+    if (welcomeEl) welcomeEl.innerText = user.username;
+
+    // Update Role
+    const roleEl = document.getElementById('userRole');
+    if (roleEl) {
+        let roleInfo = { text: 'Client', className: 'client' };
+
+        if (user.username.toLowerCase() === 'zeus') {
+            roleInfo = { text: 'Founder', className: 'founder' };
+        } else if (user.is_developer) {
+            roleInfo = { text: 'Dev', className: 'dev' };
+        } else if (user.is_content_creator) {
+            roleInfo = { text: 'Influencer', className: 'influencer' };
+        }
+
+        roleEl.innerText = roleInfo.text;
+        roleEl.className = 'user-role ' + roleInfo.className;
+    }
+
+    // Update Profile Pic
+    const picEl = document.getElementById('userProfilePic');
+    if (picEl) {
+        picEl.src = user.profile_pic || 'https://cdn.discordapp.com/embed/avatars/0.png';
+        picEl.onerror = () => { picEl.src = 'https://cdn.discordapp.com/embed/avatars/0.png'; };
+    }
+}
+
 async function loginSuccess(userData, isAutoLogin = false) {
     if (!isAutoLogin) {
         localStorage.setItem('scarlet_user', JSON.stringify(userData));
-        closeModal();
+    }
+    // Always force close modals to prevent "dark screen" issues
+    closeModal();
+    const payModal = document.getElementById('paymentModal');
+    if (payModal) payModal.style.display = 'none';
+
+    // Sanitize Profile Pic if it's the broken placeholder
+    if (userData.profile_pic === 'https://i.imgur.com/user_placeholder.png') {
+        userData.profile_pic = 'https://cdn.discordapp.com/embed/avatars/0.png';
+        localStorage.setItem('scarlet_user', JSON.stringify(userData));
     }
 
     document.getElementById('homeSection').style.display = 'none';
@@ -167,10 +208,9 @@ async function loginSuccess(userData, isAutoLogin = false) {
 
     document.getElementById('authButtons').style.display = 'none';
     const userMenu = document.getElementById('userMenu');
-    userMenu.style.display = 'block';
+    userMenu.style.display = 'flex';
 
-    const welcomeEl = document.getElementById('welcomeUser');
-    if (welcomeEl) welcomeEl.innerText = userData.username;
+    updateUserProfileUI(userData);
 
     // Lógica ADMIN
     // Fallback para sessão antiga: Se for 'zeus' e não tiver role definida, assume admin
@@ -195,6 +235,15 @@ async function loginSuccess(userData, isAutoLogin = false) {
 
     // Carrega produtos da API antes de inicializar a tela
     await fetchProducts();
+
+    // Sincroniza dados mais recentes do usuário (Profile Pic, Theme, etc)
+    // Isso garante que se mudou em outro PC, aqui atualiza.
+    if (userData.id) {
+        await syncUserSettings(userData.id);
+        // Atualiza userData local com o que veio do sync (já salvo no localStorage e currentUser)
+        userData = currentUser;
+        updateUserProfileUI(userData);
+    }
 
     // Sincronizar Licenças
     await syncLicenses(userData.id);
@@ -247,6 +296,38 @@ async function syncLicenses(userId) {
         }
     } catch (e) {
         console.error("Erro ao sincronizar licenças", e);
+    }
+}
+
+async function syncUserSettings(userId) {
+    try {
+        const res = await fetch(`/user/settings/${userId}`);
+        const data = await res.json();
+
+        if (res.ok) {
+            let changed = false;
+            // Atualiza Profile Pic
+            if (data.profile_pic) {
+                currentUser.profile_pic = data.profile_pic;
+                changed = true;
+            }
+            // Atualiza Tema
+            if (data.theme_config) {
+                currentUser.theme_config = data.theme_config;
+                // Aplica tema imediatamente
+                try {
+                    applyTheme(JSON.parse(data.theme_config));
+                } catch (e) { console.error("Erro ao aplicar tema sync", e); }
+                changed = true;
+            }
+
+            if (changed) {
+                localStorage.setItem('scarlet_user', JSON.stringify(currentUser));
+                console.log("Dados do usuário sincronizados com o servidor.");
+            }
+        }
+    } catch (e) {
+        console.error("Erro ao sincronizar user settings", e);
     }
 }
 
@@ -647,6 +728,7 @@ async function toggleContentCreator(userId, isCreator) {
             if (userId === currentUser.id) {
                 currentUser.is_content_creator = isCreator ? 1 : 0;
                 localStorage.setItem('scarlet_user', JSON.stringify(currentUser));
+                updateUserProfileUI(currentUser);
             }
         } else {
             showNotify('error', 'Erro ao atualizar status');
@@ -682,6 +764,7 @@ async function toggleDeveloper(userId, isDeveloper) {
                 currentUser.is_developer = isDeveloper ? 1 : 0;
                 currentUser.dev_token = data.dev_token || currentUser.dev_token;
                 localStorage.setItem('scarlet_user', JSON.stringify(currentUser));
+                updateUserProfileUI(currentUser);
 
                 // Refresh na UI dos tabs
                 const devTab = document.getElementById('developerTab');
@@ -1805,11 +1888,20 @@ function renderPostCard(post, isFeatured) {
         ) :
         `<img class="post-media-img" src="${post.media_url}" alt="Post" onerror="this.src='https://via.placeholder.com/400x300?text=Imagem+Indisponível'">`;
 
+    // Fallback inteligente: Se for o próprio usuário, usa a foto da sessão local (que sabemos estar certa)
+    // caso o DB ainda não tenha atualizado ou retornado null.
+    let profilePicUrl = post.profile_pic;
+    if (post.user_id === currentUser.id && currentUser.profile_pic) {
+        profilePicUrl = currentUser.profile_pic;
+    }
+    if (!profilePicUrl) profilePicUrl = 'https://cdn.discordapp.com/embed/avatars/0.png';
+
     return `
         <div class="post-card ${isFeatured ? 'featured-post' : ''}" id="post-${post.id}">
             <div class="post-header">
                 <div class="post-author">
-                    <i class="fa-solid fa-user-circle" style="font-size:2rem; color:var(--primary-color);"></i>
+                    <img src="${profilePicUrl}" alt="User" 
+                         style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; margin-right: 10px; border: 2px solid var(--primary-color);">
                     <div>
                         <strong>${post.username}</strong>
                         ${isContentCreator ? '<span class="creator-badge">✨ Criador de Conteúdo</span>' : ''}
@@ -2280,9 +2372,11 @@ function switchCommunityTab(tab) {
             chat.style.display = 'flex'; // Changed to flex for chat layout
 
             // Inicializa chat se necessário
-            if (!socket) {
-                initChat();
-            }
+            initChat();
+
+            // Auto-scroll para o fim
+            const chatMessages = document.getElementById('chatMessages');
+            if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
         }
     }
 }
@@ -2378,18 +2472,30 @@ function renderDevDocs(container) {
 
     // Snippets templates
     const snippets = {
-        javascript: `fetch('${baseUrl}/api/check-user?username=USER_TESTE', {
+        javascript: `// Exemplo 1: Check User
+fetch('${baseUrl}/api/check-user?username=USER_TESTE', {
     headers: { 'x-dev-token': '${currentUser.dev_token}' }
-}).then(res => res.json()).then(console.log);`,
+}).then(res => res.json()).then(console.log);
 
-        python: `import requests
+// Exemplo 2: Check Foto
+fetch('${baseUrl}/api/check-foto?dev-token=${currentUser.dev_token}&user=USER_ALVO')
+  .then(res => res.json())
+  .then(console.log);`,
+
+        python: `# Exemplo 1: Check User
+import requests
 
 url = '${baseUrl}/api/check-user'
 headers = {'x-dev-token': '${currentUser.dev_token}'}
 params = {'username': 'USER_TESTE'}
-
 response = requests.get(url, headers=headers, params=params)
-print(response.json())`,
+print(response.json())
+
+# Exemplo 2: Check Foto
+url2 = '${baseUrl}/api/check-foto'
+params2 = {'dev-token': '${currentUser.dev_token}', 'user': 'USER_ALVO'}
+r = requests.get(url2, params=params2)
+print(r.json())`,
 
         csharp: `using System.Net.Http;
 
@@ -2413,7 +2519,22 @@ int main() {
         lua: `-- Exemplo FiveM / Scarlet Script
 PerformHttpRequest('${baseUrl}/api/check-user?username=USER_TESTE', function(err, text, headers)
     print(text)
-end, 'GET', '', { ['x-dev-token'] = '${currentUser.dev_token}' })`
+end, 'GET', '', { ['x-dev-token'] = '${currentUser.dev_token}' })`,
+
+        // Novo endpoint Check Foto
+        checkfoto_js: `// Javascript - Obter Foto de Perfil
+fetch('${baseUrl}/api/check-foto?dev-token=${currentUser.dev_token}&user=USER_ALVO')
+  .then(res => res.json())
+  .then(data => {
+      if(data.status === 'success') console.log("Foto:", data.url);
+  });`,
+
+        checkfoto_py: `# Python - Obter Foto de Perfil
+import requests
+url = '${baseUrl}/api/check-foto'
+params = {'dev-token': '${currentUser.dev_token}', 'user': 'USER_ALVO'}
+r = requests.get(url, params=params)
+print(r.json()['url'])`
     };
 
     const currentCode = snippets[currentDocLang] || snippets['javascript'];
@@ -2585,13 +2706,19 @@ async function renderSettingsContent() {
                     <input type="file" id="profileUpload" accept="image/*" style="display:none;" onchange="handleProfileUpload(this)">
                 </div>
 
-                <div class="input-group">
-                    <label style="color:var(--text-muted); display:block; margin-bottom:5px;"><i class="fa-solid fa-user" style="margin-right:8px;"></i> Nome de Usuário</label>
-                    <input type="text" value="${currentUser.username}" disabled style="opacity:0.7">
+                <div>
+                    <label style="color:var(--text-muted); display:block; margin-bottom:5px;">Nome de Usuário</label>
+                    <div class="input-group" style="margin-top:0;">
+                        <i class="fa-solid fa-user"></i>
+                        <input type="text" value="${currentUser.username}" disabled style="opacity:0.7">
+                    </div>
                 </div>
-                <div class="input-group">
-                    <label style="color:var(--text-muted); display:block; margin-bottom:5px;"><i class="fa-solid fa-envelope" style="margin-right:8px;"></i> Email</label>
-                    <input type="text" value="${currentUser.email}" disabled style="opacity:0.7">
+                <div>
+                    <label style="color:var(--text-muted); display:block; margin-bottom:5px;">Email</label>
+                    <div class="input-group" style="margin-top:0;">
+                        <i class="fa-solid fa-envelope"></i>
+                        <input type="text" value="${currentUser.email}" disabled style="opacity:0.7">
+                    </div>
                 </div>
 
                  <h4 style="margin-top:20px; color:var(--text-muted);"><i class="fa-solid fa-shield-halved"></i> Alterar Credenciais</h4>
@@ -2607,7 +2734,11 @@ async function renderSettingsContent() {
                 <p id="updateMsg" style="margin-top:10px; text-align:center;"></p>
             </div>
         `;
-        const isDark = config.darkMode !== false; // Default true
+        const isDark = config.darkMode !== false; // Default true (apenas para leitura se necessário)
+        // Fim do bloco Profile
+    } else if (currentSettingsTab === 'appearance') {
+        const isDark = (currentUser.theme_config && JSON.parse(currentUser.theme_config).darkMode === false) ? false : true;
+        const currentPrimary = (currentUser.theme_config && JSON.parse(currentUser.theme_config).primaryColor) ? JSON.parse(currentUser.theme_config).primaryColor : '#ff0000';
 
         content.innerHTML = `
             <div class="status-box" style="border-left-color: #00bcd4;">
@@ -2623,7 +2754,7 @@ async function renderSettingsContent() {
 
                 <div class="input-group">
                     <label style="display:block; margin-bottom:10px;"><i class="fa-solid fa-palette" style="margin-right:8px;"></i> Cor Principal (Tema)</label>
-                    <input type="color" id="primaryColorPick" value="${config.primaryColor || '#ff0000'}" style="width:100%; height:40px; border:none; padding:0;" onchange="saveThemeSettings()">
+                    <input type="color" id="primaryColorPick" value="${currentPrimary}" style="width:100%; height:40px; border:none; padding:0;" onchange="saveThemeSettings()">
                 </div>
                 
                  <div style="border-top:1px solid var(--border-color); margin: 20px 0;"></div>
@@ -2648,6 +2779,7 @@ async function renderSettingsContent() {
                     <div class="input-group">
                         <label>Produto</label>
                         <select id="hwidProduct" style="width:100%; padding:10px; background:#222; color:#fff; border:1px solid var(--border-color);">
+                            <option value="all" selected>Todos (Todas as licenças)</option>
                             ${productsData.filter(p => p.hasLicense).map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
                         </select>
                     </div>
