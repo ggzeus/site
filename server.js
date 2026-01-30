@@ -8,6 +8,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const admin = require("firebase-admin");
 const EfiPay = require('sdk-node-apis-efi');
+const cors = require('cors'); // Added CORS
 
 // Initialize Firebase
 const serviceAccount = require("./firebase-service-account.json");
@@ -19,8 +20,14 @@ admin.initializeApp({
 const db = admin.firestore();
 
 const app = express();
+app.use(cors()); // Enable CORS for all roots (simplifies Netlify access)
 const server = http.createServer(app);
-const io = socketIo(server);
+const io = socketIo(server, {
+    cors: {
+        origin: "*", // Allow Socket.io from any origin
+        methods: ["GET", "POST"]
+    }
+});
 
 // --- CHAT SOCKET LOGIC ---
 io.on('connection', (socket) => {
@@ -133,16 +140,40 @@ app.post('/login', async (req, res) => {
 });
 
 app.post('/update-profile', async (req, res) => {
-    const { userId, newEmail, newPassword } = req.body;
+    const { userId, newEmail, newPassword, profilePic } = req.body;
     if (!userId) return res.status(400).json({ message: "ID obrigatório" });
     try {
         const updates = {};
         if (newEmail) updates.email = newEmail;
         if (newPassword) updates.password = await bcrypt.hash(newPassword, 10);
+
+        if (profilePic) {
+            // Check if it's base64 and save to file to avoid Firestore 1MB limit
+            if (profilePic.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/)) {
+                const matches = profilePic.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
+                const extension = matches[1];
+                const data = matches[2];
+                const buffer = Buffer.from(data, 'base64');
+                const filename = `profile_${userId}_${Date.now()}.${extension}`;
+                const filePath = path.join(uploadsDir, filename);
+
+                // Save to disk (sync to keep simple within async wrapper, or use promise)
+                await fs.promises.writeFile(filePath, buffer);
+                updates.profile_pic = `/uploads/${filename}`;
+            } else {
+                // Already a URL or small string
+                updates.profile_pic = profilePic;
+            }
+        }
+
         if (Object.keys(updates).length === 0) return res.status(400).json({ message: "Nada para atualizar" });
+
         await db.collection('users').doc(String(userId)).update(updates);
-        res.json({ message: "Perfil atualizado com sucesso!" });
-    } catch (e) { res.status(500).json({ message: "Erro ao atualizar" }); }
+        res.json({ message: "Perfil atualizado com sucesso!", newUrl: updates.profile_pic });
+    } catch (e) {
+        console.error("Update Profile Error:", e);
+        res.status(500).json({ message: "Erro ao atualizar" });
+    }
 });
 
 app.put('/user/settings', async (req, res) => {
@@ -382,7 +413,15 @@ app.post('/tickets', async (req, res) => {
     const date = new Date().toISOString();
     try {
         const docRef = await db.collection('tickets').add({
-            user_id: String(userId), subject, message, status: 'Open', created_at: date
+            user_id: String(userId),
+            subject,
+            message,
+            status: 'Open',
+            created_at: date,
+            assigned_to: null,       // New: Assignee name
+            assigned_by_id: null,    // New: ID of the admin who assumed it
+            has_unread_admin: true,  // New: Admin has unread (since user created it)
+            has_unread_user: false   // New: User just created it, so no unread for them
         });
         res.json({ message: "Ticket aberto com sucesso!", id: docRef.id });
     } catch (e) {
@@ -394,15 +433,140 @@ app.post('/tickets', async (req, res) => {
 app.get('/tickets/:userId', async (req, res) => {
     const { userId } = req.params;
     try {
-
         const snapshot = await db.collection('tickets').where('user_id', '==', String(userId)).get();
-        let tickets = snapshot.docs.map(docToObj);
+        let tickets = await Promise.all(snapshot.docs.map(async doc => {
+            const data = doc.data();
+            const msgsSnap = await db.collection('tickets').doc(doc.id).collection('messages').orderBy('created_at', 'asc').get();
+            const messages = msgsSnap.docs.map(m => m.data());
+            return { id: doc.id, ...data, messages };
+        }));
         // Sort in memory
         tickets.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
         res.json({ tickets });
     } catch (e) {
         console.error("Erro ao buscar tickets:", e);
         res.status(500).json({ message: "Erro ao buscar tickets" });
+    }
+});
+
+app.get('/admin/tickets', async (req, res) => {
+    // Check admin role headers or rely on client filtered request (server should verify, but for now we assume simple check)
+    // Ideally we pass user role in query or header
+    const { role, userId } = req.query; // Added userId to know who is requesting (optional for filtering if needed later)
+    if (role !== 'admin') return res.status(403).json({ message: "Access Denied" });
+
+    try {
+        const snapshot = await db.collection('tickets').get();
+        let tickets = await Promise.all(snapshot.docs.map(async doc => {
+            const data = doc.data();
+            // Fetch user info for display
+            let username = "Unknown";
+
+            if (data.user_id) {
+                try {
+                    const userSnap = await db.collection('users').doc(String(data.user_id)).get();
+                    if (userSnap.exists) username = userSnap.data().username;
+                } catch (err) {
+                    console.warn(`Could not fetch user for ticket ${doc.id}:`, err);
+                }
+            }
+
+            const msgsSnap = await db.collection('tickets').doc(doc.id).collection('messages').orderBy('created_at', 'asc').get();
+            const messages = msgsSnap.docs.map(m => m.data());
+
+            return { id: doc.id, ...data, username, messages };
+        }));
+
+        // Sort: Open first, then by date
+        tickets.sort((a, b) => {
+            if (a.status === 'Open' && b.status !== 'Open') return -1;
+            if (a.status !== 'Open' && b.status === 'Open') return 1;
+            return new Date(b.created_at) - new Date(a.created_at);
+        });
+
+        res.json({ tickets });
+    } catch (e) {
+        console.error("Error fetching admin tickets:", e);
+        res.status(500).json({ message: "Error" });
+    }
+});
+
+app.post('/tickets/:id/message', async (req, res) => {
+    const { id } = req.params;
+    const { userId, sender, message, role } = req.body; // role used to update status if admin
+
+    if (!message) return res.status(400).json({ message: "Message empty" });
+
+    try {
+        const ticketRef = db.collection('tickets').doc(id);
+
+        await ticketRef.collection('messages').add({
+            sender, // 'user' or 'admin' (or username)
+            message,
+            created_at: new Date().toISOString()
+        });
+
+        // Update ticket status and unread flags
+        if (role === 'admin') {
+            await ticketRef.update({
+                status: 'Answered',
+                has_unread_user: true
+            });
+        } else {
+            await ticketRef.update({
+                status: 'Open',
+                has_unread_admin: true
+            });
+        }
+
+        res.json({ message: "Sent" });
+    } catch (e) {
+        console.error("Error replying ticket:", e);
+        res.status(500).json({ message: "Error" });
+    }
+});
+
+// --- NEW TICKET ENDPOINTS ---
+
+// Assume Ticket (Admin Only)
+app.post('/tickets/:id/assume', async (req, res) => {
+    const { id } = req.params;
+    const { userId, username, role } = req.body;
+
+    if (role !== 'admin') return res.status(403).json({ message: "Apenas administradores podem assumir tickets." });
+
+    try {
+        await db.collection('tickets').doc(id).update({
+            assigned_to: username,
+            assigned_by_id: String(userId)
+        });
+        res.json({ message: "Ticket assumido com sucesso!" });
+    } catch (e) {
+        console.error("Error assuming ticket:", e);
+        res.status(500).json({ message: "Erro ao assumir ticket." });
+    }
+});
+
+// Mark Ticket as Read
+app.post('/tickets/:id/read', async (req, res) => {
+    const { id } = req.params;
+    const { role } = req.body; // 'admin' or 'user'
+
+    try {
+        const ticketRef = db.collection('tickets').doc(id);
+        const updates = {};
+
+        if (role === 'admin') {
+            updates.has_unread_admin = false;
+        } else {
+            updates.has_unread_user = false;
+        }
+
+        await ticketRef.update(updates);
+        res.json({ message: "Marcado como lido." });
+    } catch (e) {
+        // console.error("Error marking read:", e); // Silent fail ok
+        res.status(500).json({ message: "Erro." });
     }
 });
 

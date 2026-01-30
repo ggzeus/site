@@ -521,7 +521,7 @@ body {
     padding: 25px;
     border-left: 3px solid var(--primary-color);
     margin-top: 25px;
-    border-radius: 0 8px 8px 0;
+    border-radius: 8px;
 }
 
 .product-card.promo-card-highlight {
@@ -1588,13 +1588,26 @@ body {
 /* Profile Picture Round & Overlay */
 .profile-pic-container {
     position: relative;
-    width: 120px;
-    height: 120px;
-    margin: 0 auto 20px auto;
-    border-radius: 50%;
     overflow: hidden;
-    border: 3px solid rgba(255, 255, 255, 0.1);
+    margin: 0 auto;
+}
+
+/* Settings Page Profile Pic */
+.status-box .profile-pic-container {
+    width: 160px;
+    height: 160px;
+    border-radius: 50%;
+    border: 5px solid rgba(255, 255, 255, 0.1);
     box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+    margin-bottom: 25px;
+}
+
+/* Navbar Profile Pic */
+.navbar .profile-pic-container {
+    width: 45px;
+    height: 45px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.1);
 }
 
 .profile-pic-container img {
@@ -1867,7 +1880,9 @@ input[type="color"]::-webkit-color-swatch {
     color: #ff4444;
     background: rgba(255, 68, 68, 0.1);
     transform: translateX(2px);
-}/* --- RESPONSIVIDADE (MOBILE & TABLET) --- */
+}
+
+/* --- RESPONSIVIDADE (MOBILE & TABLET) --- */
 
 /* Tablet (max-width: 1024px) */
 @media (max-width: 1024px) {

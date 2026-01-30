@@ -1,9 +1,17 @@
+// Configuração da URL da API
+// Se estiver rodando localmente (localhost), usa caminho relativo (ou http://localhost:3000)
+// Se estiver em produção (Netlify), DEVE ser a URL do seu backend no Render/Railway
+const API_BASE_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? ''
+    : 'https://SEU-BACKEND-AQUI.onrender.com'; // <--- ALTERE ISSO DEPOIS DE HOSPEDAR O BACKEND
+
 let currentMode = 'login';
 let currentUser = null;
 // productsData agora será preenchido pela API
 let productsData = [];
 let socket = null;
 let currentDocLang = 'javascript'; // Start with JS
+let pendingProfilePic = null; // Store profile pic for unified save
 let devChatMessages = [{ role: 'system', text: 'Olá! Sou a IA de suporte da Scarlet API. Posso ajudar com exemplos de código ou dúvidas sobre endpoints. Pergunte algo como "Como usar em Python?" ou "Qual a URL de check-user?"' }];
 
 
@@ -115,7 +123,7 @@ document.getElementById('authForm').addEventListener('submit', async (e) => {
     const pass = document.getElementById('password').value;
     const email = document.getElementById('email').value;
 
-    const endpoint = currentMode === 'login' ? '/login' : '/register';
+    const endpoint = currentMode === 'login' ? `${API_BASE_URL}/login` : `${API_BASE_URL}/register`;
     const msg = document.getElementById('msg');
     const payload = currentMode === 'login' ? { user, pass } : { user, pass, email };
 
@@ -220,10 +228,13 @@ async function loginSuccess(userData, isAutoLogin = false) {
     }
 
     const adminTab = document.getElementById('adminTab');
+    const adminTicketsTab = document.getElementById('adminTicketsTab');
     if (userData.role === 'admin') {
         adminTab.style.display = 'block';
+        if (adminTicketsTab) adminTicketsTab.style.display = 'block';
     } else {
         adminTab.style.display = 'none';
+        if (adminTicketsTab) adminTicketsTab.style.display = 'none';
     }
 
     const devTab = document.getElementById('developerTab');
@@ -253,7 +264,7 @@ async function loginSuccess(userData, isAutoLogin = false) {
 
 async function fetchProducts() {
     try {
-        const res = await fetch('/products');
+        const res = await fetch(`${API_BASE_URL}/products`);
         const data = await res.json();
         if (data.products && data.products.length > 0) {
             productsData = data.products;
@@ -268,7 +279,7 @@ async function fetchProducts() {
 
 async function syncLicenses(userId) {
     try {
-        const response = await fetch(`/licenses/${userId}`);
+        const response = await fetch(`${API_BASE_URL}/licenses/${userId}`);
         const data = await response.json();
 
         // Reseta dados de licença
@@ -301,7 +312,7 @@ async function syncLicenses(userId) {
 
 async function syncUserSettings(userId) {
     try {
-        const res = await fetch(`/user/settings/${userId}`);
+        const res = await fetch(`${API_BASE_URL}/user/settings/${userId}`);
         const data = await res.json();
 
         if (res.ok) {
@@ -423,6 +434,14 @@ async function loadDashContent(section) {
                 return;
             }
             renderDevDocs(container);
+            break;
+
+        case 'admin_tickets':
+            if (currentUser.role !== 'admin') {
+                container.innerHTML = "<h2>Acesso Negado</h2>";
+                return;
+            }
+            renderAdminTickets(container);
             break;
     }
 }
@@ -629,7 +648,7 @@ function renderAdminPanel(container) {
 
 async function loadContentCreators() {
     try {
-        const res = await fetch(`/users/list?role=${currentUser.role}`);
+        const res = await fetch(`${API_BASE_URL}/users/list?role=${currentUser.role}`);
         const data = await res.json();
 
         const list = document.getElementById('contentCreatorsList');
@@ -1218,7 +1237,7 @@ let resellersData = [];
 
 async function fetchResellers() {
     try {
-        const res = await fetch('/resellers');
+        const res = await fetch(`${API_BASE_URL}/resellers`);
         const data = await res.json();
         resellersData = data.resellers || [];
     } catch (e) {
@@ -1385,7 +1404,7 @@ async function selectPlan(productId, planType, price) {
 
     // Gera PIX com o plano selecionado
     try {
-        const response = await fetch('/pay/pix', {
+        const response = await fetch(`${API_BASE_URL}/pay/pix`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: currentUser.id, productId, planType, price })
@@ -1443,7 +1462,7 @@ async function verifyPayment() {
     setTimeout(async () => {
         // Confirma compra no backend
         try {
-            const res = await fetch('/purchase', {
+            const res = await fetch(`${API_BASE_URL}/purchase`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ userId: currentUser.id, productId: pendingProductId })
@@ -1515,21 +1534,27 @@ async function updateProfile() {
     const msg = document.getElementById('updateMsg');
 
 
-    if (!newEmail && !newPass) {
+    if (!newEmail && !newPass && !pendingProfilePic) {
         msg.style.color = 'yellow';
         msg.innerText = 'Preencha ao menos um campo.';
         return;
     }
 
     try {
-        const response = await fetch('/update-profile', {
+        const payload = {
+            userId: currentUser.id,
+            newEmail: newEmail,
+            newPassword: newPass
+        };
+
+        if (pendingProfilePic) {
+            payload.profilePic = pendingProfilePic;
+        }
+
+        const response = await fetch(`${API_BASE_URL}/update-profile`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                userId: currentUser.id,
-                newEmail: newEmail,
-                newPassword: newPass
-            })
+            body: JSON.stringify(payload)
         });
 
         const data = await response.json();
@@ -1538,6 +1563,12 @@ async function updateProfile() {
             msg.style.color = '#00ff00';
             msg.innerText = data.message;
             if (newEmail) currentUser.email = newEmail;
+            if (pendingProfilePic) {
+                currentUser.profile_pic = pendingProfilePic;
+                pendingProfilePic = null; // Reset
+                updateUserProfileUI(currentUser);
+            }
+            localStorage.setItem('scarlet_user', JSON.stringify(currentUser));
         } else {
             msg.style.color = 'red';
             msg.innerText = data.message;
@@ -1644,7 +1675,7 @@ function toggleDoc(id) {
 async function loadComments(topicId) {
     const list = document.getElementById(`list-comments-${topicId}`);
     try {
-        const res = await fetch(`/comments/${topicId}`);
+        const res = await fetch(`${API_BASE_URL}/comments/${topicId}`);
         const data = await res.json();
 
         if (data.comments.length === 0) {
@@ -1676,7 +1707,7 @@ async function submitComment(topicId) {
     }
 
     try {
-        const res = await fetch('/comments', {
+        const res = await fetch(`${API_BASE_URL}/comments`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1718,7 +1749,7 @@ async function redeemKey() {
     }
 
     try {
-        const res = await fetch('/redeem-key', {
+        const res = await fetch(`${API_BASE_URL}/redeem-key`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: currentUser.id, key })
@@ -1746,7 +1777,7 @@ let postsData = [];
 async function renderFeed(container) {
     // Busca posts da API
     try {
-        const res = await fetch('/posts');
+        const res = await fetch(`${API_BASE_URL}/posts`);
         const data = await res.json();
         postsData = data.posts || [];
     } catch (e) {
@@ -1855,7 +1886,7 @@ function renderPostCard(post, isFeatured) {
         if (!confirm(`Enviar atualização para "${product.name}"? Isso notificará o Discord.`)) return;
 
         try {
-            const res = await fetch('/api/send-update', {
+            const res = await fetch(`${API_BASE_URL}/api/send-update`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1957,7 +1988,7 @@ async function createPost(event) {
     const isContentCreator = currentUser.is_content_creator || 0;
 
     try {
-        const res = await fetch('/posts', {
+        const res = await fetch(`${API_BASE_URL}/posts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2057,7 +2088,7 @@ async function handleFileUpload_Old(file) {
             const base64data = reader.result;
 
             // Envia para o servidor
-            const res = await fetch('/upload', {
+            const res = await fetch(`${API_BASE_URL}/upload`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ image: base64data })
@@ -2086,7 +2117,7 @@ async function handleFileUpload_Old(file) {
 
 async function toggleLike(postId) {
     try {
-        const res = await fetch(`/posts/${postId}/like`, {
+        const res = await fetch(`${API_BASE_URL}/posts/${postId}/like`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: currentUser.id })
@@ -2154,7 +2185,7 @@ async function handleFileUpload(file) {
             const base64data = reader.result;
 
             // Envia para o servidor
-            const res = await fetch('/upload', {
+            const res = await fetch(`${API_BASE_URL}/upload`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ image: base64data })
@@ -2194,7 +2225,7 @@ async function togglePostComments(postId) {
 
 async function loadPostComments(postId) {
     try {
-        const res = await fetch(`/posts/${postId}/comments`);
+        const res = await fetch(`${API_BASE_URL}/posts/${postId}/comments`);
         const data = await res.json();
 
         const commentsList = document.getElementById(`comments-list-${postId}`);
@@ -2222,7 +2253,7 @@ async function addPostComment(postId) {
     if (!message) return;
 
     try {
-        const res = await fetch(`/posts/${postId}/comments`, {
+        const res = await fetch(`${API_BASE_URL}/posts/${postId}/comments`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2253,7 +2284,7 @@ async function deletePost(postId) {
     if (!confirm('Tem certeza que deseja deletar este post?')) return;
 
     try {
-        const res = await fetch(`/posts/${postId}`, {
+        const res = await fetch(`${API_BASE_URL}/posts/${postId}`, {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2323,7 +2354,7 @@ async function handleFileUploadStream(file) {
 
     try {
         // Envia o arquivo como blob/stream direto
-        const res = await fetch('/upload', {
+        const res = await fetch(`${API_BASE_URL}/upload`, {
             method: 'POST',
             headers: {
                 'x-filename': file.name,
@@ -2387,7 +2418,7 @@ function initChat() {
     if (socket) return; // Já conectado
 
     // Conecta ao namespace raiz (o mesmo do server)
-    socket = io();
+    socket = io(API_BASE_URL || undefined); // Se vazio o IO tenta conectar no host atual, se tiver url conecta lá
 
     // Entra na sala com nome de usuário
     if (currentUser && currentUser.username) {
@@ -2468,7 +2499,7 @@ function escapeHtml(text) {
 // --- DEVELOPER DOCS & AI FUNCTIONS ---
 
 function renderDevDocs(container) {
-    const baseUrl = window.location.origin;
+    const baseUrl = API_BASE_URL || window.location.origin;
 
     // Snippets templates
     const snippets = {
@@ -2629,7 +2660,7 @@ async function handleAiChatSubmit(e) {
     renderDevDocs(document.getElementById('dashDynamicContent'));
 
     try {
-        const res = await fetch('/api/ai/chat', {
+        const res = await fetch(`${API_BASE_URL}/api/ai/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2703,7 +2734,7 @@ async function renderSettingsContent() {
                 <div class="profile-pic-container">
                     <img id="profilePreview" src="${pic}" alt="Profile">
                     <label for="profileUpload" class="profile-overlay"><i class="fa-solid fa-camera"></i> ALTERAR</label>
-                    <input type="file" id="profileUpload" accept="image/*" style="display:none;" onchange="handleProfileUpload(this)">
+                    <input type="file" id="profileUpload" accept="image/*" style="display:none;" onchange="handleProfileUploadLocal(this)">
                 </div>
 
                 <div>
@@ -2819,34 +2850,16 @@ async function renderSettingsContent() {
     }
 }
 
-async function handleProfileUpload(input) {
+async function handleProfileUploadLocal(input) {
     if (input.files && input.files[0]) {
         const file = input.files[0];
         const reader = new FileReader();
 
-        reader.onload = async function (e) {
+        reader.onload = function (e) {
             const base64Info = e.target.result;
             document.getElementById('profilePreview').src = base64Info;
-
-            // Save to server
-            try {
-                const res = await fetch('/user/settings', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        userId: currentUser.id,
-                        profilePic: base64Info
-                    })
-                });
-                if (res.ok) {
-                    currentUser.profile_pic = base64Info;
-                    localStorage.setItem('scarlet_user', JSON.stringify(currentUser));
-                    showNotify('success', 'Foto atualizada!');
-                }
-            } catch (err) {
-                console.error(err);
-                showNotify('error', 'Erro ao salvar foto.');
-            }
+            // Store for saving later
+            pendingProfilePic = base64Info;
         }
         reader.readAsDataURL(file);
     }
@@ -2929,7 +2942,7 @@ async function handleHwidReset(e) {
     const reason = document.getElementById('hwidReason').value;
 
     try {
-        const res = await fetch('/hwid-reset', {
+        const res = await fetch(`${API_BASE_URL}/hwid-reset`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: currentUser.id, productId, reason })
@@ -2949,7 +2962,7 @@ async function handleTicketSubmit(e) {
     const message = document.getElementById('ticketMessage').value;
 
     try {
-        const res = await fetch('/tickets', {
+        const res = await fetch(`${API_BASE_URL}/tickets`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: currentUser.id, subject, message })
@@ -2966,24 +2979,331 @@ async function handleTicketSubmit(e) {
 
 async function loadUserTickets() {
     try {
-        const res = await fetch(`/tickets/${currentUser.id}`);
+        const res = await fetch(`${API_BASE_URL}/tickets/${currentUser.id}`);
         const data = await res.json();
         const list = document.getElementById('myTicketsList');
         if (!list) return;
 
         if (data.tickets && data.tickets.length > 0) {
-            list.innerHTML = `<h4 style="margin-top:20px;">Meus Tickets</h4>` + data.tickets.map(t => `
-                <div style="background:#222; padding:10px; margin-bottom:10px; border-radius:4px; border-left: 3px solid #777;">
-                    <div style="display:flex; justify-content:space-between;">
-                        <strong>${t.subject}</strong>
+            list.innerHTML = `<h4 style="margin-top:20px;">Meus Tickets</h4>` + data.tickets.map(t => {
+                const unreadDot = t.has_unread_user ? `<span style="display:inline-block; width:10px; height:10px; background:red; border-radius:50%; margin-right:5px;"></span>` : '';
+                return `
+                <div onclick="openUserTicketChat('${t.id}', '${escapeHtml(t.subject)}')" style="background:#222; padding:10px; margin-bottom:10px; border-radius:4px; border-left: 3px solid ${t.has_unread_user ? 'red' : '#777'}; cursor:pointer; transition: background 0.2s;" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#222'">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <strong>${unreadDot}${t.subject}</strong>
                         <span style="font-size:0.8rem; color:#aaa;">${new Date(t.created_at).toLocaleDateString()}</span>
                     </div>
-                    <p style="font-size:0.9rem; color:#ccc; margin-top:5px;">${t.message}</p>
-                    <small style="color:${t.status === 'Open' ? '#00ff88' : '#888'}">Status: ${t.status}</small>
+                    <p style="font-size:0.9rem; color:#ccc; margin-top:5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90%;">${t.message}</p>
+                    <div style="display:flex; justify-content:space-between; margin-top:5px;">
+                        <small style="color:${t.status !== 'Open' ? '#00ff88' : '#888'}">Status: ${t.status}</small>
+                        ${t.assigned_to ? `<small style="color:#00bd9d"><i class="fa-solid fa-user-secret"></i> ${t.assigned_to}</small>` : ''}
+                    </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
         } else {
             list.innerHTML = '<p style="color:#666; margin-top:10px;">Nenhum ticket encontrado.</p>';
         }
     } catch (err) { console.error(err); }
+}
+
+let userTicketInterval = null;
+
+function openUserTicketChat(ticketId, subject) {
+    let modal = document.getElementById('userTicketModal');
+    if (!modal) {
+        const div = document.createElement('div');
+        div.id = 'userTicketModal';
+        div.className = 'modal';
+        div.style.zIndex = '3500';
+        div.innerHTML = `
+            <div class="modal-content" style="max-width:600px; width:95%; height:80vh; display:flex; flex-direction:column;">
+                <span class="close" onclick="closeUserTicketModal()">&times;</span>
+                <h3 id="userTicketTitle" style="border-bottom:1px solid #333; padding-bottom:10px;">Ticket Chat</h3>
+                <div id="userTicketChatBox" style="flex:1; overflow-y:auto; background:#111; padding:15px; margin:10px 0; border-radius:8px; border:1px solid #333;"></div>
+                <form onsubmit="sendTicketReplyUser(event)" style="display:flex; gap:10px;">
+                    <input type="text" id="userTicketInput" placeholder="Sua resposta..." autocomplete="off" style="flex:1; padding:10px; background:#222; color:white; border:1px solid #444; border-radius:4px;">
+                    <button type="submit" class="cta-button" style="width:auto;"><i class="fa-solid fa-paper-plane"></i></button>
+                </form>
+            </div>
+        `;
+        document.body.appendChild(div);
+        modal = div;
+    }
+
+    currentTicketId = ticketId;
+    document.getElementById('userTicketTitle').innerHTML = `<i class="fa-solid fa-comments"></i> ${subject}`;
+    modal.style.display = 'flex';
+
+    // Mark as read immediately
+    markTicketRead(ticketId, 'user');
+
+    loadTicketMessagesUser(ticketId);
+
+    // Poll for changes
+    if (userTicketInterval) clearInterval(userTicketInterval);
+    userTicketInterval = setInterval(() => loadTicketMessagesUser(ticketId), 5000);
+}
+
+function closeUserTicketModal() {
+    const modal = document.getElementById('userTicketModal');
+    if (modal) modal.style.display = 'none';
+    if (userTicketInterval) clearInterval(userTicketInterval);
+    loadUserTickets(); // Refresh list to clear unread
+}
+
+async function markTicketRead(id, role) {
+    try {
+        await fetch(`${API_BASE_URL}/tickets/${id}/read`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role })
+        });
+    } catch (e) { }
+}
+
+async function loadTicketMessagesUser(ticketId) {
+    const box = document.getElementById('userTicketChatBox');
+    // Don't clear box every time to avoid flicker, only if empty
+    if (!box.innerHTML) box.innerHTML = '<p style="text-align:center; color:#666;">Carregando...</p>';
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/tickets/${currentUser.id}`);
+        const data = await res.json();
+        const ticket = data.tickets.find(t => t.id === ticketId);
+
+        if (ticket) {
+            let html = `
+                <div style="margin-bottom:15px; background:rgba(255,0,0,0.1); padding:10px; border-radius:8px;">
+                     <strong style="color:var(--primary-color);">Ticket Original:</strong><br>
+                     ${ticket.message}
+                </div>
+            `;
+
+            if (ticket.messages && ticket.messages.length > 0) {
+                html += ticket.messages.map(m => `
+                    <div style="margin: 10px 0; text-align: ${m.sender === currentUser.username ? 'right' : 'left'};">
+                        <div style="display:inline-block; padding:8px 12px; border-radius:8px; background: ${m.sender === currentUser.username ? '#0078d4' : '#333'}; color:white; max-width:80%;">
+                             <small style="display:block; opacity:0.7; font-size:0.7rem;">${m.sender}</small>
+                             ${m.message}
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            box.innerHTML = html;
+            // Only scroll if near bottom or first load? For now auto scroll.
+            // box.scrollTop = box.scrollHeight; 
+        }
+    } catch (e) {
+        // box.innerHTML = "Erro ao carregar mensagens.";
+    }
+}
+
+async function sendTicketReplyUser(e) {
+    e.preventDefault();
+    const input = document.getElementById('userTicketInput');
+    const message = input.value.trim();
+    if (!message || !currentTicketId) return;
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/tickets/${currentTicketId}/message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                userId: currentUser.id,
+                sender: currentUser.username,
+                message,
+                role: 'user'
+            })
+        });
+
+        if (res.ok) {
+            input.value = '';
+            loadTicketMessagesUser(currentTicketId);
+        } else {
+            alert('Erro ao enviar.');
+        }
+    } catch (err) {
+        console.error(err);
+        alert('Erro de conexão');
+    }
+}
+
+// --- ADMIN TICKETS ---
+async function renderAdminTickets(container) {
+    container.innerHTML = `<h2><i class="fa-solid fa-ticket"></i> Tickets de Suporte (Admin)</h2>
+    <div id="adminTicketsContainer">
+        <p>Carregando tickets...</p>
+    </div>`;
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/admin/tickets?role=${currentUser.role}&userId=${currentUser.id}`);
+        const data = await res.json();
+
+        if (!data.tickets || data.tickets.length === 0) {
+            document.getElementById('adminTicketsContainer').innerHTML = "<p>Nenhum ticket encontrado.</p>";
+            return;
+        }
+
+        document.getElementById('adminTicketsContainer').innerHTML = data.tickets.map(t => {
+            const hasMessages = t.messages && t.messages.length > 0;
+            const lastMsg = hasMessages ? t.messages[t.messages.length - 1].message : t.message;
+
+            const isAssigned = !!t.assigned_to;
+            const assignee = t.assigned_to || 'Ninguém';
+            const unreadDot = t.has_unread_admin ? `<span style="display:inline-block; margin-left:5px; padding:2px 6px; background:red; color:white; border-radius:10px; font-size:0.7rem;">NOVA</span>` : '';
+
+            let assignAction = '';
+            if (!isAssigned) {
+                assignAction = `<button class="btn-outline" onclick="assumeTicket('${t.id}')" style="font-size:0.75rem; padding:4px 8px; margin-right:5px; background:#00bd9d; border:none; color:white;"><i class="fa-solid fa-user-plus"></i> Assumir</button>`;
+            } else {
+                const amIAssigned = String(t.assigned_by_id) === String(currentUser.id);
+                const color = amIAssigned ? '#00ff88' : '#aaa';
+                assignAction = `<span style="font-size:0.75rem; color:${color}; margin-right:10px;"><i class="fa-solid fa-user-lock"></i> ${assignee}</span>`;
+            }
+
+            return `
+            <div style="background:#222; padding:15px; margin-bottom:15px; border-radius:8px; border-left: 4px solid ${t.has_unread_admin ? 'red' : (t.status === 'Open' ? '#00ff88' : '#888')};">
+                <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+                    <div>
+                        <strong style="color:white; font-size:1.1rem;">${t.subject} ${unreadDot}</strong>
+                        <br>
+                        <span style="color:var(--primary-color); font-size:0.9rem;">${t.username || 'User'}</span>
+                    </div>
+                    <div style="text-align:right;">
+                        <small style="color:#aaa;">${new Date(t.created_at).toLocaleDateString()}</small>
+                        <br>
+                        ${assignAction}
+                    </div>
+                </div>
+                
+                <div style="background:rgba(0,0,0,0.3); padding:10px; border-radius:4px; margin-bottom:10px; color:#ccc; font-size:0.9rem;">
+                    <i class="fa-solid fa-quote-left" style="color:#555; margin-right:5px;"></i> ${lastMsg}
+                </div>
+                
+                <button class="cta-button" onclick="openAdminTicketChat('${t.id}', '${escapeHtml(t.subject)}', '${t.user_id}')" style="padding:8px 20px; font-size:0.8rem;">
+                    <i class="fa-solid fa-reply"></i> VER / RESPONDER
+                </button>
+            </div>
+        `}).join('');
+
+    } catch (e) {
+        console.error(e);
+        document.getElementById('adminTicketsContainer').innerHTML = "<p>Erro ao carregar tickets.</p>";
+    }
+}
+
+async function assumeTicket(ticketId) {
+    if (!confirm("Deseja assumir este ticket para você?")) return;
+    try {
+        const res = await fetch(`${API_BASE_URL}/tickets/${ticketId}/assume`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUser.id, username: currentUser.username, role: currentUser.role })
+        });
+        if (res.ok) {
+            renderAdminTickets(document.getElementById('dashDynamicContent'));
+        }
+    } catch (e) { console.error(e); }
+}
+
+let currentTicketId = null;
+
+function openAdminTicketChat(ticketId, subject, userId) {
+    let modal = document.getElementById('adminTicketModal');
+    if (!modal) {
+        const div = document.createElement('div');
+        div.id = 'adminTicketModal';
+        div.className = 'modal';
+        div.style.zIndex = '3500';
+        div.innerHTML = `
+            <div class="modal-content" style="max-width:600px; width:95%; height:80vh; display:flex; flex-direction:column;">
+                <span class="close" onclick="document.getElementById('adminTicketModal').style.display='none'">&times;</span>
+                <h3 id="admTicketTitle" style="border-bottom:1px solid #333; padding-bottom:10px;">Ticket Chat</h3>
+                <div id="admTicketChatBox" style="flex:1; overflow-y:auto; background:#111; padding:15px; margin:10px 0; border-radius:8px; border:1px solid #333;"></div>
+                <form onsubmit="sendTicketReply(event)" style="display:flex; gap:10px;">
+                    <input type="text" id="admTicketInput" placeholder="Sua resposta..." autocomplete="off" style="flex:1; padding:10px; background:#222; color:white; border:1px solid #444; border-radius:4px;">
+                    <button type="submit" class="cta-button" style="width:auto;"><i class="fa-solid fa-paper-plane"></i></button>
+                </form>
+            </div>
+        `;
+        document.body.appendChild(div);
+        modal = div;
+    }
+
+    currentTicketId = ticketId;
+    document.getElementById('admTicketTitle').innerHTML = `<i class="fa-solid fa-comments"></i> ${subject}`;
+    modal.style.display = 'flex';
+
+    // Mark as read immediately for admin
+    markTicketRead(ticketId, 'admin');
+
+    loadTicketMessages(ticketId);
+}
+
+async function loadTicketMessages(ticketId) {
+    const box = document.getElementById('admTicketChatBox');
+    box.innerHTML = '<p style="text-align:center; color:#666;">Carregando...</p>';
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/admin/tickets?role=${currentUser.role}`);
+        const data = await res.json();
+        const ticket = data.tickets.find(t => t.id === ticketId);
+
+        if (ticket) {
+            let html = `
+                <div style="margin-bottom:15px; background:rgba(255,0,0,0.1); padding:10px; border-radius:8px;">
+                     <strong style="color:var(--primary-color);">Ticket Original:</strong><br>
+                     ${ticket.message}
+                </div>
+            `;
+
+            if (ticket.messages && ticket.messages.length > 0) {
+                html += ticket.messages.map(m => `
+                    <div style="margin: 10px 0; text-align: ${m.sender === 'admin' || m.sender === currentUser.username ? 'right' : 'left'};">
+                        <div style="display:inline-block; padding:8px 12px; border-radius:8px; background: ${m.sender === 'admin' || m.sender === currentUser.username ? '#0078d4' : '#333'}; color:white; max-width:80%;">
+                             <small style="display:block; opacity:0.7; font-size:0.7rem;">${m.sender}</small>
+                             ${m.message}
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            box.innerHTML = html;
+            box.scrollTop = box.scrollHeight;
+        }
+    } catch (e) {
+        box.innerHTML = "Erro ao carregar mensagens.";
+    }
+}
+
+async function sendTicketReply(e) {
+    e.preventDefault();
+    const input = document.getElementById('admTicketInput');
+    const message = input.value.trim();
+    if (!message || !currentTicketId) return;
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/tickets/${currentTicketId}/message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                userId: currentUser.id, // Who is sending
+                sender: currentUser.username, // Using username for display clarity
+                message,
+                role: currentUser.role
+            })
+        });
+
+        if (res.ok) {
+            input.value = '';
+            loadTicketMessages(currentTicketId);
+        } else {
+            alert('Erro ao enviar.');
+        }
+    } catch (err) {
+        console.error(err);
+        alert('Erro de conexão');
+    }
 }
