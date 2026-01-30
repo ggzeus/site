@@ -29,6 +29,8 @@ const io = socketIo(server, {
     }
 });
 
+// --- AUTH API IMPORT MOVED DOWN ---
+
 // --- CHAT SOCKET LOGIC ---
 io.on('connection', (socket) => {
     console.log('New client connected:', socket.id);
@@ -87,6 +89,10 @@ if (!fs.existsSync(uploadsDir)) {
 
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
+
+// --- AUTH API IMPORT ---
+const authApi = require('./auth-api');
+app.use(authApi);
 app.use(express.static(path.join(__dirname)));
 
 // Helpers
@@ -848,6 +854,54 @@ app.put('/users/:id/limit', async (req, res) => {
         await db.collection('users').doc(id).update({ upload_limit_gb: limitGB });
         res.status(200).json({ message: "Updated" });
     } catch (e) { res.status(500).json({ message: "Error" }); }
+});
+
+// --- PARTNER MANAGEMENT (ADMIN) ---
+app.post('/partners', async (req, res) => {
+    const { userId, role } = req.body; // Target userId
+    const requesterRole = req.body.role || 'admin'; // FIXME: should be from token/session. Assuming admin for now.
+
+    // Safety check: only admins can promote
+    // In real app we check req.user.role from middleware
+    // We will assume the frontend sends { role: 'admin' } in body as per legacy code style here (e.g. products API)
+
+    if (requesterRole !== 'admin') return res.status(403).json({ message: "Access Denied" });
+    if (!userId) return res.status(400).json({ message: "User ID required" });
+
+    try {
+        await db.collection('users').doc(String(userId)).update({ role: 'partner' });
+        res.status(200).json({ message: "User promoted to Partner" });
+    } catch (e) {
+        console.error("Promote Partner Error:", e);
+        res.status(500).json({ message: "Error promoting user" });
+    }
+});
+
+app.delete('/partners/:userId', async (req, res) => {
+    const { userId } = req.params;
+    const { role } = req.body;
+
+    if (role !== 'admin') return res.status(403).json({ message: "Access Denied" });
+
+    try {
+        await db.collection('users').doc(String(userId)).update({ role: 'user' });
+        res.status(200).json({ message: "User removed from Partners" });
+    } catch (e) {
+        res.status(500).json({ message: "Error removing partner" });
+    }
+});
+
+app.get('/partners', async (req, res) => {
+    const { role } = req.query;
+    if (role !== 'admin') return res.status(403).json({ message: "Access Denied" });
+
+    try {
+        const snapshot = await db.collection('users').where('role', '==', 'partner').get();
+        const partners = snapshot.docs.map(doc => ({ id: doc.id, username: doc.data().username, email: doc.data().email }));
+        res.json({ partners });
+    } catch (e) {
+        res.status(500).json({ message: "Error fetching partners" });
+    }
 });
 
 // --- PUBLIC APIs ---

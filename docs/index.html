@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scarlet Auth Documentation</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="style.css" rel="stylesheet">
+</head>
+
+<body>
+    <div class="header">
+        <div class="container header-container">
+            <div class="logo">
+                <i class="fa-solid fa-shield-halved"></i> Scarlet Auth
+            </div>
+            <nav>
+                <a href="#" class="active">Overview</a>
+                <a href="#install">Installation</a>
+                <a href="#api">API Reference</a>
+                <a href="#examples">Examples</a>
+            </nav>
+        </div>
+    </div>
+
+    <div class="container main-content">
+        <div class="repo-header">
+            <div class="repo-title">
+                <span class="author">scarlet-systems</span> / <span class="name">auth-sdk</span>
+                <span class="badge">Public</span>
+            </div>
+            <div class="repo-stats">
+                <div class="stat"><i class="fa-regular fa-eye"></i> Watch 12</div>
+                <div class="stat"><i class="fa-solid fa-code-fork"></i> Fork 4</div>
+                <div class="stat"><i class="fa-regular fa-star"></i> Star 89</div>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <div class="tab active"><i class="fa-solid fa-code"></i> Code</div>
+            <div class="tab"><i class="fa-regular fa-circle-dot"></i> Issues</div>
+            <div class="tab"><i class="fa-solid fa-code-pull-request"></i> Pull requests</div>
+        </div>
+
+        <div class="file-browser">
+            <div class="file-header">
+                <div class="user-info">
+                    <img src="https://cdn.discordapp.com/embed/avatars/0.png" alt="User">
+                    <strong>zeus-dev</strong> <span>Initial commit</span>
+                </div>
+                <div class="commit-hash">9a8b7c6</div>
+                <div class="commit-time">2 hours ago</div>
+            </div>
+
+            <div class="file-list">
+                <div class="file-row">
+                    <div class="icon"><i class="fa-regular fa-folder"></i></div>
+                    <div class="name"><a href="#">examples</a></div>
+                    <div class="message">Added C# and Python examples</div>
+                    <div class="time">2 hours ago</div>
+                </div>
+                <div class="file-row">
+                    <div class="icon"><i class="fa-regular fa-file-code"></i></div>
+                    <div class="name"><a href="#">Auth.cs</a></div>
+                    <div class="message">C# Wrapper implementation</div>
+                    <div class="time">2 hours ago</div>
+                </div>
+                <div class="file-row">
+                    <div class="icon"><i class="fa-brands fa-python"></i></div>
+                    <div class="name"><a href="#">auth.py</a></div>
+                    <div class="message">Python client script</div>
+                    <div class="time">2 hours ago</div>
+                </div>
+                <div class="file-row">
+                    <div class="icon"><i class="fa-regular fa-file-lines"></i></div>
+                    <div class="name"><a href="#">README.md</a></div>
+                    <div class="message">Updated documentation</div>
+                    <div class="time">2 hours ago</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="readme">
+            <div class="readme-header">
+                <i class="fa-solid fa-book-open"></i> README.md
+            </div>
+            <div class="readme-content" id="readme-body">
+                <h1>Scarlet Auth System</h1>
+                <p>Secure, fast, and reliable authentication system for your applications. Inspired by KeyAuth but built
+                    with enhanced server-side security.</p>
+
+                <h2>Features</h2>
+                <ul>
+                    <li>🔒 <strong>Secure Handshake</strong>: HMAC-SHA256 request signing</li>
+                    <li>🛡️ <strong>Anti-Tamper</strong>: Server-side validation of integrity</li>
+                    <li>💻 <strong>HWID Locking</strong>: Advanced hardware fingerprinting</li>
+                    <li>☁️ <strong>Cloud Config</strong>: Remote variables and settings</li>
+                </ul>
+
+                <h2 id="install">Installation</h2>
+                <p>Download the example for your language:</p>
+                <div class="code-block">
+                    <pre><code>git clone https://github.com/scarlet-systems/auth-sdk.git</code></pre>
+                    <button class="copy-btn"><i class="fa-regular fa-copy"></i></button>
+                </div>
+
+                <h2 id="api">API Reference</h2>
+                <h3>Initialize</h3>
+                <div class="code-block">
+                    <pre><code>POST /auth/init
+{
+    "name": "MyApp",
+    "ownerId": "OwnerID",
+    "secret": "AppSecret",
+    "version": "1.0"
+}</code></pre>
+                </div>
+
+                <h3>Login</h3>
+                <div class="code-block">
+                    <pre><code>POST /auth/login
+{
+    "username": "User",
+    "password": "Pass",
+    "hwid": "HWID-String",
+    "appId": "AppID"
+}</code></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

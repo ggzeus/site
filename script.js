@@ -229,12 +229,20 @@ async function loginSuccess(userData, isAutoLogin = false) {
 
     const adminTab = document.getElementById('adminTab');
     const adminTicketsTab = document.getElementById('adminTicketsTab');
+    const partnerAppsTab = document.getElementById('partnerAppsTab');
+
     if (userData.role === 'admin') {
         adminTab.style.display = 'block';
         if (adminTicketsTab) adminTicketsTab.style.display = 'block';
+        if (partnerAppsTab) partnerAppsTab.style.display = 'block';
+    } else if (userData.role === 'partner') {
+        adminTab.style.display = 'none';
+        if (adminTicketsTab) adminTicketsTab.style.display = 'none';
+        if (partnerAppsTab) partnerAppsTab.style.display = 'block';
     } else {
         adminTab.style.display = 'none';
         if (adminTicketsTab) adminTicketsTab.style.display = 'none';
+        if (partnerAppsTab) partnerAppsTab.style.display = 'none';
     }
 
     const devTab = document.getElementById('developerTab');
@@ -418,6 +426,14 @@ async function loadDashContent(section) {
 
         case 'config':
             renderSettings(container);
+            break;
+
+        case 'applications':
+            if (currentUser.role !== 'partner' && currentUser.role !== 'admin') {
+                container.innerHTML = "<h2>Acesso Negado</h2>";
+                return;
+            }
+            loadPartnerApps();
             break;
 
         case 'admin':
@@ -1586,7 +1602,727 @@ function showSuccessToast(productName) {
 // --- FUNÇÕES UTILITÁRIAS PARA OS CARDS NOVOS ---
 
 // --- DOCS / CORREÇÃO DE ERROS ---
+// --- PARTNERS DASHBOARD FUNCTIONS ---
+
+// --- PARTNER APPS DASHBOARD ---
+let currentAppId = null;
+
+async function loadPartnerApps() {
+    const container = document.getElementById('dashDynamicContent');
+    container.innerHTML = `
+        <div class="dash-header-clean">
+            <h2><i class="fa-solid fa-cubes"></i> Minhas Aplicações</h2>
+            <button class="keyauth-btn" onclick="showCreateAppModal()" style="max-width: 180px; font-family: 'Inter', sans-serif; font-weight: 500;">
+                <i class="fa-solid fa-plus"></i> NOVA APLICAÇÃO
+            </button>
+        </div>
+        <div id="appsListContainer" class="keyauth-grid">
+            <div class="loading-spinner"></div>
+        </div>
+    `;
+
+    try {
+        const response = await fetch(`/api/app/list/${currentUser.id}`);
+        const data = await response.json();
+
+        const list = document.getElementById('appsListContainer');
+        list.innerHTML = '';
+
+        if (!data.apps || data.apps.length === 0) {
+            list.innerHTML = '<p class="empty-state" style="grid-column: 1/-1; text-align: center; color: #888;">Você ainda não tem aplicações criadas.</p>';
+            return;
+        }
+
+        data.apps.forEach(app => {
+            const card = document.createElement('div');
+            card.className = 'keyauth-card';
+            card.style.position = 'relative';
+            card.innerHTML = `
+                <div class="keyauth-card-header">
+                    <h3 class="keyauth-card-title">${app.name}</h3>
+                    <span class="keyauth-badge ${app.status === 'active' ? 'active' : 'disabled'}">
+                        ${app.status.toUpperCase()}
+                    </span>
+                </div>
+                <div class="keyauth-card-body" style="font-family: 'JetBrains Mono', monospace;">
+                    
+                    <div class="keyauth-detail-group">
+                        <span class="keyauth-label">Application Name</span>
+                        <div class="keyauth-value-box">
+                            <span>${app.name}</span>
+                            <i class="fa-regular fa-copy" title="Copiar Nome" onclick="navigator.clipboard.writeText('${app.name}').then(()=>alert('Nome Copiado!'))"></i>
+                        </div>
+                    </div>
+
+                    <div class="keyauth-detail-group">
+                        <span class="keyauth-label">Owner ID</span>
+                        <div class="keyauth-value-box">
+                            <span>${app.ownerId}</span>
+                            <i class="fa-regular fa-copy" title="Copiar ID" onclick="navigator.clipboard.writeText('${app.ownerId}').then(()=>alert('ID Copiado!'))"></i>
+                        </div>
+                    </div>
+
+                    <div class="keyauth-detail-group">
+                        <span class="keyauth-label">Application Secret</span>
+                        <div class="keyauth-value-box">
+                            <span>${app.secret.substring(0, 35)}...</span>
+                            <i class="fa-regular fa-copy" title="Copiar Secret" onclick="navigator.clipboard.writeText('${app.secret}').then(()=>alert('Secret Copiado!'))"></i>
+                        </div>
+                    </div>
+
+                    <div style="display:flex; justify-content:space-between; margin-top:5px;">
+                         <div class="keyauth-detail-group">
+                            <span class="keyauth-label">Version</span>
+                            <div style="color:#fff; font-weight:600; font-family:'JetBrains Mono', monospace;">${app.version}</div>
+                         </div>
+                         <div class="keyauth-detail-group" style="text-align:right;">
+                            <span class="keyauth-label">Status</span>
+                            <div style="color:${app.status === 'active' ? '#00ff88' : '#ff4444'}; font-weight:600; font-family:'JetBrains Mono', monospace;">${app.status === 'active' ? 'UNDETECTED' : 'DETECTED'}</div>
+                         </div>
+                    </div>
+
+                    <div class="keyauth-actions">
+                        <button onclick="openAppDashboard('${app.id}', '${app.name}')" class="keyauth-btn" style="font-family: 'Inter', sans-serif; font-weight: 500;">
+                            <i class="fa-solid fa-gear"></i> GERENCIAR
+                        </button>
+                    </div>
+                </div>
+            `;
+            list.appendChild(card);
+        });
+
+    } catch (e) {
+        console.error(e);
+        container.innerHTML = '<p class="error">Erro ao carregar aplicações.</p>';
+    }
+}
+
+function showCreateAppModal() {
+    const name = prompt("Nome da Aplicação:");
+    if (name) createApp(name);
+}
+
+async function createApp(name) {
+    try {
+        const res = await fetch('/api/app/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUser.id, name })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showNotify('success', "Aplicação criada!");
+            loadPartnerApps();
+        } else {
+            showNotify('error', data.message);
+        }
+    } catch (e) {
+        showNotify('error', "Erro ao criar");
+    }
+}
+
+async function openAppDashboard(appId, appName) {
+    currentAppId = appId;
+    const container = document.getElementById('dashDynamicContent');
+
+    container.innerHTML = `
+        <div class="dash-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+            <div style="display:flex; align-items:center; gap:15px;">
+                <button class="btn-outline" onclick="loadPartnerApps()" style="padding:5px 10px;"><i class="fa-solid fa-arrow-left"></i></button>
+                <h2 style="margin:0;"><i class="fa-solid fa-rocket"></i> ${appName}</h2>
+            </div>
+        </div>
+        
+        <div class="app-dashboard-tabs" style="display:flex; gap:10px; border-bottom:1px solid #333; padding-bottom:10px; margin-bottom:20px;">
+            <button class="subtab-btn active" onclick="switchAppTab('overview', this)">Visão Geral</button>
+            <button class="subtab-btn" onclick="switchAppTab('keys', this)">Keys</button>
+            <button class="subtab-btn" onclick="switchAppTab('users', this)">Usuários</button>
+            <button class="subtab-btn" onclick="switchAppTab('logs', this)">Logs</button>
+            <button class="subtab-btn" onclick="switchAppTab('settings', this)">Configurações</button>
+        </div>
+
+        <div id="appTabContent" class="app-content-area">
+            <!-- Dynamic Content -->
+        </div>
+    `;
+
+    // Auto load overview
+    const firstBtn = container.querySelector('.app-dashboard-tabs .subtab-btn');
+    switchAppTab('overview', firstBtn);
+}
+
+async function switchAppTab(tab, btnElement) {
+    const container = document.getElementById('appTabContent');
+
+    // Update active class
+    if (btnElement) {
+        document.querySelectorAll('.app-dashboard-tabs .subtab-btn').forEach(btn => btn.classList.remove('active'));
+        btnElement.classList.add('active');
+    }
+
+    // Load Content
+    if (tab === 'overview') await loadAppOverview(currentAppId, container);
+    if (tab === 'keys') await loadAppKeys(currentAppId, container);
+    if (tab === 'users') await loadAppUsers(currentAppId, container);
+    if (tab === 'logs') await loadAppLogs(currentAppId, container);
+    if (tab === 'settings') await loadAppSettings(currentAppId, container);
+}
+
+// --- LOGS UI ---
+let currentLogsPage = 1;
+let currentLogsAppId = null;
+
+async function loadAppLogs(appId, container) {
+    currentLogsPage = 1;
+    currentLogsAppId = appId;
+
+    container.innerHTML = `
+        <div class="ka-container">
+             <div class="ka-action-bar">
+                <h3><i class="fa-solid fa-list"></i> Login Logs</h3>
+            </div>
+
+            <div class="ka-table-wrapper">
+                <table class="ka-table">
+                    <thead>
+                        <tr>
+                            <th>User/Key</th>
+                            <th>IP Address</th>
+                            <th>HWID</th>
+                            <th>Time</th>
+                            <th>Components</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logsTableBody">
+                        <!-- Logs here -->
+                    </tbody>
+                </table>
+            </div>
+            
+            <div style="text-align:center; padding:10px;">
+                <button id="btnLoadMoreLogs" class="btn-outline" style="display:none;" onclick="loadMoreLogs()">Load More</button>
+            </div>
+        </div>
+
+        <!-- Simple Modal for Components -->
+        <div id="compModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center;">
+            <div style="background:#1a1a1a; padding:20px; border-radius:8px; width:300px; border:1px solid #333;">
+                <h4 style="margin-top:0;">Hardware Specs</h4>
+                <div id="compModalContent" style="font-size:0.9rem; color:#ccc; margin-bottom:15px; line-height:1.5;"></div>
+                <button class="btn-primary" style="width:100%;" onclick="document.getElementById('compModal').style.display='none'">Close</button>
+            </div>
+        </div>
+    `;
+
+    await fetchAndRenderLogs(true);
+}
+
+async function loadMoreLogs() {
+    currentLogsPage++;
+    await fetchAndRenderLogs(false);
+}
+
+async function fetchAndRenderLogs(reset) {
+    const tbody = document.getElementById('logsTableBody');
+    const btnMore = document.getElementById('btnLoadMoreLogs');
+
+    if (reset) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px;">Loading logs...</td></tr>';
+        btnMore.style.display = 'none';
+    } else {
+        btnMore.innerHTML = 'Loading...';
+        btnMore.disabled = true;
+    }
+
+    try {
+        const res = await fetch(`/api/app/${currentLogsAppId}/logs?page=${currentLogsPage}&limit=20`);
+        const data = await res.json();
+
+        if (reset) tbody.innerHTML = '';
+
+        if (data.logs && data.logs.length > 0) {
+            data.logs.forEach(log => {
+                let compBtn = '<span style="color:#666">N/A</span>';
+
+                if (log.components) {
+                    // Store comp data in a data attribute or safely passed
+                    // We'll use a globally accessible helper or simple JSON string trick for this small scale
+                    // Better: standard onclick calling a function with params
+                    // But parsing JSON in onclick string is messy.
+                    // Let's attach event listener? No, dynamic elements.
+                    // We'll use a hack to store it in a hidden value or just base64 encode it?
+                    // Easiest: `showCompDetails('${btoa(JSON.stringify(log.components))}')`
+                    const compStr = btoa(JSON.stringify(log.components));
+                    compBtn = `<button class="btn-outline btn-sm" onclick="showCompDetails('${compStr}')"><i class="fa-solid fa-ellipsis"></i></button>`;
+                }
+
+                const tr = document.createElement('tr');
+                tr.className = 'ka-list-item';
+                tr.innerHTML = `
+                    <td><span style="color:#fff; font-weight:600;">${log.key_or_username}</span></td>
+                    <td style="font-family:monospace; color:#888;">${log.ip}</td>
+                    <td style="font-family:monospace; color:#aaa; font-size:0.8rem;">${log.hwid ? log.hwid.substring(0, 15) + '...' : 'N/A'}</td>
+                    <td style="color:#888;">${new Date(log.timestamp).toLocaleString()}</td>
+                    <td>${compBtn}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        } else if (reset) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#888;">No logs found.</td></tr>';
+        }
+
+        // Handle "Load More" button
+        if (data.hasMore) {
+            btnMore.style.display = 'inline-block';
+            btnMore.innerHTML = 'Load More';
+            btnMore.disabled = false;
+        } else {
+            btnMore.style.display = 'none';
+        }
+
+    } catch (e) {
+        console.error(e);
+        if (reset) tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Error loading logs</td></tr>';
+    }
+}
+
+function showCompDetails(base64Json) {
+    try {
+        const comps = JSON.parse(atob(base64Json));
+        const modal = document.getElementById('compModal');
+        const content = document.getElementById('compModalContent');
+
+        content.innerHTML = `
+            <strong>GPU:</strong> ${comps.gpu || 'N/A'}<br>
+            <strong>CPU:</strong> ${comps.cpu || 'N/A'}<br>
+            <strong>MOBO:</strong> ${comps.motherboard || 'N/A'}<br>
+            <br>
+            <small style="color:#666">Recorded: ${new Date(comps.recorded_at || Date.now()).toLocaleString()}</small>
+        `;
+
+        modal.style.display = 'flex';
+    } catch (e) {
+        console.error("Error showing details", e);
+    }
+}
+
+async function loadAppOverview(appId, container) {
+    container.innerHTML = '<div class="loading-spinner"></div>';
+    try {
+        const res = await fetch(`/ api / app / ${appId} / stats`);
+        const stats = await res.json();
+
+        container.innerHTML = `
+        < div class= "stats-grid" style = "display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px;" >
+                <div class="product-card" style="text-align: center; padding: 20px;">
+                    <h3 style="color:#888; font-size: 1rem;">Usuários Totais</h3>
+                    <p class="stat-number" style="font-size: 2.5rem; font-weight: bold; margin: 10px 0;">${stats.users || 0}</p>
+                </div>
+                <div class="product-card" style="text-align: center; padding: 20px;">
+                    <h3 style="color:#888; font-size: 1rem;">Keys Geradas</h3>
+                    <p class="stat-number" style="font-size: 2.5rem; font-weight: bold; margin: 10px 0;">${stats.keys || 0}</p>
+                </div>
+                <div class="product-card" style="text-align: center; padding: 20px;">
+                    <h3 style="color:#888; font-size: 1rem;">Sessões Ativas</h3>
+                    <p class="stat-number" style="font-size: 2.5rem; font-weight: bold; margin: 10px 0; color: #00bd9d;">0</p> 
+                </div>
+            </div >
+
+            <div class="quick-actions" style="margin-top:20px;">
+                <h3>Ações Rápidas</h3>
+                <div class="action-buttons" style="display:flex; gap:10px; margin-top:10px;">
+                    <button class="cta-button" onclick="document.querySelectorAll('.subtab-btn')[1].click()">Gerenciar Keys</button>
+                    <button class="btn-outline" onclick="showGenerateKeysModal('${appId}')">Gerar Keys Rápidas</button>
+                </div>
+            </div>
+        `;
+    } catch (e) {
+        container.innerHTML = "Erro ao carregar stats.";
+    }
+}
+
+
+// --- KEYAUTH STYLE KEYS UI ---
+let currentKeysData = []; // Store for filtering
+let lastCreatedKeys = null; // Store just-created keys
+
+async function loadAppKeys(appId, container) {
+    let keysDisplayHtml = '';
+    if (lastCreatedKeys) {
+        keysDisplayHtml = `
+            < div class="ka-container" style = "margin-bottom: 20px; border-color: #00bcd4; background: rgba(0, 188, 212, 0.05);" >
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <h3 style="margin:0; font-size:1rem; color:#00bcd4;"><i class="fa-solid fa-check-circle"></i> Licenses Created</h3>
+                    <button class="ka-btn" onclick="navigator.clipboard.writeText('${lastCreatedKeys.join('\\n')}').then(()=>alert('Copied All!'))">
+                        <i class="fa-regular fa-copy"></i> Copy All
+                    </button>
+                </div>
+                <div style="background:rgba(0,0,0,0.3); padding:15px; border-radius:4px; max-height:150px; overflow-y:auto; font-family:'JetBrains Mono', monospace; font-size:0.9rem; border:1px solid rgba(255,255,255,0.1);">
+                    ${lastCreatedKeys.map(k => `<div>${k}</div>`).join('')}
+                </div>
+                <div style="margin-top:10px; text-align:right;">
+                    <button class="ka-btn danger" style="padding:5px 10px; font-size:0.8rem;" onclick="clearCreatedKeys('${appId}')">Close</button>
+                </div>
+            </div >
+            `;
+    }
+
+    container.innerHTML = `
+        ${keysDisplayHtml}
+        <div class="ka-container">
+            <div class="ka-action-bar">
+                <div class="ka-search-box">
+                    <i class="fa-solid fa-search"></i>
+                    <input type="text" id="keysSearch" placeholder="Search licenses..." onkeyup="filterKeys(this.value)">
+                </div>
+                <div class="ka-actions">
+                    <button class="ka-btn ka-btn-primary" onclick="openCreateLicenseModal('${appId}')">
+                        <i class="fa-solid fa-plus"></i> Create License
+                    </button>
+                    <button class="ka-btn danger" onclick="deleteBulkKeys('${appId}')">
+                        <i class="fa-solid fa-trash"></i> Delete Unused
+                    </button>
+                </div>
+            </div>
+
+            <div class="ka-table-wrapper">
+                <table class="ka-table">
+                    <thead>
+                        <tr>
+                            <th>License</th>
+                            <th>Note</th>
+                            <th>Level</th>
+                            <th>Duration</th>
+                            <th>Status/Used By</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="keysTableBody">
+                        <tr><td colspan="7" style="text-align:center; padding:20px;">Loading licenses...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <p id="keysCountLabel" style="margin-top:15px; font-size:0.8rem; color:#666;"></p>
+        </div>
+        `;
+
+    try {
+        const res = await fetch(`/ api / app / ${appId}/keys`);
+        const data = await res.json();
+        const tbody = document.getElementById('keysTableBody');
+
+        if (data.keys) {
+            currentKeysData = data.keys; // Save for filter
+            renderKeysTable(data.keys);
+        } else {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Error loading keys</td></tr>';
+        }
+
+    } catch (e) {
+        console.error(e);
+        document.getElementById('keysTableBody').innerHTML = '<tr><td colspan="7" style="text-align:center;">Error loading keys</td></tr>';
+    }
+}
+
+function clearCreatedKeys(appId) {
+    lastCreatedKeys = null;
+    loadAppKeys(appId, document.getElementById('appTabContent'));
+}
+
+function renderKeysTable(keys) {
+    const tbody = document.getElementById('keysTableBody');
+    const countLabel = document.getElementById('keysCountLabel');
+    tbody.innerHTML = '';
+
+    if (keys.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:#888;">No licenses found.</td></tr>';
+        countLabel.innerText = "Showing 0 licenses";
+        return;
+    }
+
+    keys.forEach(k => {
+        const isUsed = k.status === 'used';
+        const tr = document.createElement('tr');
+        tr.className = 'ka-list-item';
+        tr.innerHTML = `
+            <td>
+                <span class="ka-key-text" onclick="navigator.clipboard.writeText('${k.key}')" style="cursor:pointer" title="Click to copy">
+                    ${k.key}
+                </span>
+            </td>
+            <td style="color:#aaa;">${k.note || '<span style="color:#444">N/A</span>'}</td>
+            <td>${k.level || 1}</td>
+            <td>${k.days} Day(s)</td>
+            <td>
+                <span class="ka-status ${k.status}">${k.status}</span>
+                ${isUsed ? `<br><small style="color:#666; font-size:0.7rem;">${k.hwid ? k.hwid.substring(0, 10) + '...' : 'Unknown'}</small>` : ''}
+            </td>
+            <td style="color:#888;">${new Date(k.created_at).toLocaleDateString()}</td>
+            <td>
+                <button class="ka-btn danger" style="padding:4px 8px; font-size:0.75rem;" onclick="deleteAppKey('${k.appId}', '${k.id}')">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    countLabel.innerText = `Showing ${keys.length} licenses`;
+}
+
+function filterKeys(query) {
+    const lowerQ = query.toLowerCase();
+    const filtered = currentKeysData.filter(k =>
+        k.key.toLowerCase().includes(lowerQ) ||
+        (k.note && k.note.toLowerCase().includes(lowerQ)) ||
+        (k.status.toLowerCase().includes(lowerQ))
+    );
+    renderKeysTable(filtered);
+}
+
+// --- NEW MODAL FOR LICENSE ---
+function openCreateLicenseModal(appId) {
+    // Remove existing if any
+    const existing = document.getElementById('createLicenseModal');
+    if (existing) existing.remove();
+
+    // Default values
+    const defAmount = localStorage.getItem('last_amount') || 1;
+    const defMask = localStorage.getItem('last_mask') || '';
+    const defLevel = localStorage.getItem('last_level') || 1;
+    const defUnit = localStorage.getItem('last_unit') || 'days';
+    const defDur = localStorage.getItem('last_dur') || 30;
+
+    const modalHtml = `
+    <div id="createLicenseModal" class="ka-modal-overlay">
+        <div class="ka-modal-content">
+            <div class="ka-modal-header">
+                <h3>Create a new license</h3>
+                <i class="fa-solid fa-xmark" style="cursor:pointer; color:#888;" onclick="this.closest('.ka-modal-overlay').remove()"></i>
+            </div>
+            <div class="ka-modal-body">
+                 <div class="ka-form-group">
+                    <label>Amount <span class="required">*</span></label>
+                    <input type="number" id="genAmount" value="${defAmount}" min="1">
+                 </div>
+                 
+                 <div class="ka-form-group">
+                    <label>License Mask (Optional)</label>
+                    <input type="text" id="genMask" placeholder="KEY-******" value="${defMask}">
+                    <small style="color:#666; font-size:0.7rem;">Use * for random characters.</small>
+                 </div>
+
+                 <div class="ka-form-row">
+                     <div class="ka-form-group" style="flex:1">
+                        <label>Level</label>
+                        <input type="number" id="genLevel" value="${defLevel}">
+                     </div>
+                     <div class="ka-form-group" style="flex:1">
+                        <label>Unit</label>
+                        <select id="genUnit">
+                            <option value="days" ${defUnit === 'days' ? 'selected' : ''}>Days</option>
+                            <option value="lifetime" ${defUnit === 'lifetime' ? 'selected' : ''}>Lifetime</option>
+                        </select>
+                     </div>
+                 </div>
+
+                 <div class="ka-form-group">
+                    <label>Duration</label>
+                    <input type="number" id="genDuration" value="${defDur}">
+                 </div>
+
+                 <div class="ka-form-group">
+                    <label>Note</label>
+                    <input type="text" id="genNote" placeholder="e.g. Reseller Sale">
+                 </div>
+            </div>
+            <div class="ka-modal-footer">
+                <button class="ka-btn" onclick="document.getElementById('createLicenseModal').remove()">Cancel</button>
+                <button class="ka-btn ka-btn-primary" onclick="submitCreateLicense('${appId}')">Create License</button>
+            </div>
+        </div>
+    </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+}
+
+async function submitCreateLicense(appId) {
+    const count = document.getElementById('genAmount').value;
+    const mask = document.getElementById('genMask').value;
+    const level = document.getElementById('genLevel').value;
+    const unit = document.getElementById('genUnit').value;
+    let days = document.getElementById('genDuration').value;
+    const note = document.getElementById('genNote').value;
+
+    // Save defaults
+    localStorage.setItem('last_amount', count);
+    localStorage.setItem('last_mask', mask);
+    localStorage.setItem('last_level', level);
+    localStorage.setItem('last_unit', unit);
+    localStorage.setItem('last_dur', days);
+
+    if (unit === 'lifetime') days = 36500; // 100 years
+
+    try {
+        const btn = document.querySelector('#createLicenseModal .ka-btn-primary');
+        btn.innerText = "Creating...";
+        btn.disabled = true;
+
+        const res = await fetch(`/api/app/${appId}/keys/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUser.id, appId, count, days, mask, note, level })
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+            showNotify('success', 'Licenses Created!');
+            document.getElementById('createLicenseModal').remove();
+
+            // Show created keys block
+            lastCreatedKeys = data.keys;
+
+            // Correctly reload into the existing Tab Content, preserving headers above
+            const tabContent = document.getElementById('appTabContent');
+            if (tabContent) {
+                loadAppKeys(appId, tabContent);
+            }
+        } else {
+            showNotify('error', 'Failed to create');
+            console.log(data);
+            btn.innerText = "Create License";
+            btn.disabled = false;
+        }
+    } catch (e) {
+        console.error(e);
+        showNotify('error', 'Network Error');
+    }
+}
+
+async function deleteAppKey(appId, keyId) {
+    if (!confirm("Tem certeza que deseja deletar esta key?")) return;
+    try {
+        const res = await fetch(`/api/app/${appId}/keys/${keyId}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUser.id })
+        });
+        if (res.ok) {
+            showNotify('success', "Key deletada");
+            loadAppKeys(appId, document.getElementById('appTabContent'));
+        } else {
+            showNotify('error', "Erro");
+        }
+    } catch (e) {
+        showNotify('error', "Erro");
+    }
+}
+
+// --- KEYAUTH STYLE USERS UI ---
+let currentUsersData = [];
+
+async function loadAppUsers(appId, container) {
+    container.innerHTML = `
+        <div class="ka-container">
+             <div class="ka-action-bar">
+                <div class="ka-search-box">
+                    <i class="fa-solid fa-search"></i>
+                    <input type="text" id="usersSearch" placeholder="Search users by name/ip..." onkeyup="filterUsers(this.value)">
+                </div>
+            </div>
+
+            <div class="ka-table-wrapper">
+                <table class="ka-table">
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>IP Address</th>
+                            <th>Expiry</th>
+                            <th>Last Login</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTableBody">
+                        <tr><td colspan="5" style="text-align:center; padding:20px;">Loading users...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <p id="usersCountLabel" style="margin-top:15px; font-size:0.8rem; color:#666;"></p>
+        </div>
+    `;
+
+    try {
+        const res = await fetch(`/api/app/${appId}/users`);
+        const data = await res.json();
+
+        if (data.users) {
+            currentUsersData = data.users;
+            renderUsersTable(data.users);
+        } else {
+            document.getElementById('usersTableBody').innerHTML = '<tr><td colspan="5" style="text-align:center;">Error loading users</td></tr>';
+        }
+
+    } catch (e) {
+        console.error(e);
+        document.getElementById('usersTableBody').innerHTML = '<tr><td colspan="5" style="text-align:center;">Error loading users</td></tr>';
+    }
+}
+
+function renderUsersTable(users) {
+    const tbody = document.getElementById('usersTableBody');
+    const countLabel = document.getElementById('usersCountLabel');
+    tbody.innerHTML = '';
+
+    if (users.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#888;">No users found.</td></tr>';
+        countLabel.innerText = "Showing 0 users";
+        return;
+    }
+
+    users.forEach(u => {
+        const tr = document.createElement('tr');
+        tr.className = 'ka-list-item';
+        tr.innerHTML = `
+            <td style="font-weight:600; color:#fff;">${u.username}</td>
+            <td style="font-family:monospace; color:#888;">${u.ip || 'N/A'}</td>
+            <td>${u.expires_at ? new Date(u.expires_at).toLocaleDateString() : 'Lifetime'}</td>
+            <td style="color:#aaa;">${u.last_login ? new Date(u.last_login).toLocaleString() : 'Never'}</td>
+            <td>
+                 <button class="ka-btn danger" style="padding:4px 8px; font-size:0.75rem;">
+                    <i class="fa-solid fa-ban"></i> Ban
+                </button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+    countLabel.innerText = `Showing ${users.length} users`;
+}
+
+function filterUsers(query) {
+    const lowerQ = query.toLowerCase();
+    const filtered = currentUsersData.filter(u =>
+        u.username.toLowerCase().includes(lowerQ) ||
+        (u.ip && u.ip.includes(lowerQ))
+    );
+    renderUsersTable(filtered);
+}
+
+async function loadAppSettings(appId, container) {
+    container.innerHTML = `
+        <h3>Configurações</h3>
+        <div class="status-box">
+             <p>As configurações avançadas (Reset HWID global, Download Link, Webhooks) serão implementadas em breve.</p>
+        </div>
+    `;
+}
+
+// --- DOCS DATA ---
 const docsData = [
+
     {
         id: 'auth-error',
         title: 'Erro "Tentando se conectar ao auth" ou "Signature verification failed"',
