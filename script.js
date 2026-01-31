@@ -3,7 +3,7 @@
 // Se estiver em produção (Netlify), DEVE ser a URL do seu backend no Render/Railway
 const API_BASE_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     ? ''
-    : ''; // PRODUÇÃO: COLOQUE A URL DO SEU BACKEND AQUI (ex: 'https://seu-backend.discloud.app')
+    : 'https://zeus-scarlet.netlify.app'; // PRODUÇÃO: URL do Backend Netlify
 
 let currentMode = 'login';
 let currentUser = null;
@@ -76,11 +76,13 @@ function showModal(mode) {
         title.innerText = 'Acessar Scarlet';
         btn.innerText = 'ENTRAR';
         emailGroup.style.display = 'none';
+        document.getElementById('roleGroup').style.display = 'none';
         emailInput.required = false;
     } else {
         title.innerText = 'Junte-se ao Scarlet';
         btn.innerText = 'REGISTRAR';
         emailGroup.style.display = 'block';
+        document.getElementById('roleGroup').style.display = 'flex';
         emailInput.required = true;
     }
 }
@@ -94,19 +96,19 @@ function showNotify(type, message) {
     if (!container) return;
 
     const toast = document.createElement('div');
-    toast.className = `notification-toast ${type}`;
+    toast.className = `notification - toast ${type} `;
 
     let icon = 'fa-info-circle';
     if (type === 'success') icon = 'fa-check-circle';
     if (type === 'error') icon = 'fa-exclamation-triangle';
 
     toast.innerHTML = `
-        <i class="fa-solid ${icon}"></i>
+    < i class="fa-solid ${icon}" ></i >
         <div class="msg-content">
             <strong>${type.toUpperCase()}</strong>
             <p>${message}</p>
         </div>
-    `;
+`;
 
     container.appendChild(toast);
 
@@ -123,9 +125,14 @@ document.getElementById('authForm').addEventListener('submit', async (e) => {
     const pass = document.getElementById('password').value;
     const email = document.getElementById('email').value;
 
-    const endpoint = currentMode === 'login' ? `${API_BASE_URL}/login` : `${API_BASE_URL}/register`;
+    const endpoint = currentMode === 'login' ? `${API_BASE_URL} /login` : `${API_BASE_URL}/register`;
     const msg = document.getElementById('msg');
-    const payload = currentMode === 'login' ? { user, pass } : { user, pass, email };
+
+    let payload = { user, pass };
+    if (currentMode === 'register') {
+        const role = document.querySelector('input[name="role"]:checked').value;
+        payload = { user, pass, email, role };
+    }
 
     try {
         const response = await fetch(endpoint, {
@@ -148,18 +155,25 @@ document.getElementById('authForm').addEventListener('submit', async (e) => {
                 };
                 loginSuccess(currentUser);
             } else {
-                msg.style.color = '#00ff00';
-                msg.innerText = 'Conta criada! Faça login.';
-                document.getElementById('username').value = '';
-                document.getElementById('password').value = '';
-                document.getElementById('email').value = '';
-                setTimeout(() => showModal('login'), 1500);
+                // Auto-login after register
+                if (data.user) {
+                    currentUser = data.user;
+                    loginSuccess(currentUser);
+                    msg.style.color = '#00ff00';
+                    msg.innerText = 'Conta criada! Entrando...';
+                } else {
+                    // Fallback old behavior
+                    msg.style.color = '#00ff00';
+                    msg.innerText = 'Conta criada! Faça login.';
+                    setTimeout(() => showModal('login'), 1500);
+                }
             }
         } else {
             msg.style.color = 'red';
             msg.innerText = data.message;
         }
     } catch (error) {
+        console.error(error);
         msg.innerText = "Erro de conexão";
     }
 });
@@ -191,7 +205,14 @@ function updateUserProfileUI(user) {
     // Update Profile Pic
     const picEl = document.getElementById('userProfilePic');
     if (picEl) {
-        picEl.src = user.profile_pic || 'https://cdn.discordapp.com/embed/avatars/0.png';
+        // Priority: Discord Avatar (if enabled) > Default Profile Pic
+        let avatarUrl = user.profile_pic || 'https://cdn.discordapp.com/embed/avatars/0.png';
+
+        if (user.use_discord_avatar && user.discord_avatar) {
+            avatarUrl = user.discord_avatar;
+        }
+
+        picEl.src = avatarUrl;
         picEl.onerror = () => { picEl.src = 'https://cdn.discordapp.com/embed/avatars/0.png'; };
     }
 }
@@ -206,10 +227,13 @@ async function loginSuccess(userData, isAutoLogin = false) {
     if (payModal) payModal.style.display = 'none';
 
     // Sanitize Profile Pic if it's the broken placeholder
-    if (userData.profile_pic === 'https://i.imgur.com/user_placeholder.png') {
+    // Logic for Discord Avatar priority
+    if (userData.use_discord_avatar && userData.discord_avatar) {
+        userData.profile_pic = userData.discord_avatar;
+    } else if (userData.profile_pic === 'https://i.imgur.com/user_placeholder.png') {
         userData.profile_pic = 'https://cdn.discordapp.com/embed/avatars/0.png';
-        localStorage.setItem('scarlet_user', JSON.stringify(userData));
     }
+    localStorage.setItem('scarlet_user', JSON.stringify(userData));
 
     document.getElementById('homeSection').style.display = 'none';
     document.getElementById('dashboardSection').style.display = 'block';
@@ -231,18 +255,55 @@ async function loginSuccess(userData, isAutoLogin = false) {
     const adminTicketsTab = document.getElementById('adminTicketsTab');
     const partnerAppsTab = document.getElementById('partnerAppsTab');
 
+    // Partner Specific Tabs
+    const partnerPlansTab = document.getElementById('partnerPlansTab');
+    const partnerManageTab = document.getElementById('partnerManageTab');
+
+    // Client Tabs (to hide for partners)
+    // Intro/Community/Addons/Install/Config are client tabs (Intro and Config maybe common?)
+    // Requirement: "Caso for cliente, só irá aparecer para ele: Introdução; Community; Conteúdos Adicionais; Instalação; Configuração;"
+    // Requirement: "Caso for Partner: Planos (NOVA TAB); Gerenciar (NOVA TAB)"
+
+    const allSidebarLi = document.querySelectorAll('.sidebar li');
+
+    // Force Hide All First
+    allSidebarLi.forEach(li => li.style.display = 'none');
+
+    if (userData.role === 'partner') {
+        // Show Partner Tabs
+        if (partnerPlansTab) partnerPlansTab.style.display = 'block';
+        if (partnerManageTab) partnerManageTab.style.display = 'block';
+        // Maybe Config for partner too? Requirement didn't say explicit NO, but said "Caso for Partner: Planos, Gerenciar". 
+        // Strict interpretation: ONLY Planos and Gestionar. But usually they need config/logout. keeping strict for now based on prompt.
+
+        loadDashContent('partner_plans'); // Default for partner
+    } else {
+        // Default Client
+        // Show Client Tabs (Intro, Promo, Addons, Install, Config)
+        // Indices: 0(Intro), 1(Homo?), 2(Promo), etc. safer to query by onclick attribute or text, but let's assume standard ones are visible by default
+        // The Li elements don't have IDs except the special ones. 
+        // Strategy: Reset all standard ones to display block (except special ones)
+
+        // Re-enable standard tabs:
+        const standardTabs = ['intro', 'promo', 'addons', 'install', 'config'];
+        document.querySelectorAll('.sidebar li').forEach(li => {
+            const onclick = li.getAttribute('onclick');
+            if (onclick && standardTabs.some(t => onclick.includes(`'${t}'`))) {
+                li.style.display = 'block';
+            }
+        });
+
+        loadDashContent('intro'); // Default for client
+    }
+
+    // Admin Overrides (Additive)
     if (userData.role === 'admin') {
-        adminTab.style.display = 'block';
+        if (adminTab) adminTab.style.display = 'block';
         if (adminTicketsTab) adminTicketsTab.style.display = 'block';
         if (partnerAppsTab) partnerAppsTab.style.display = 'block';
-    } else if (userData.role === 'partner') {
-        adminTab.style.display = 'none';
-        if (adminTicketsTab) adminTicketsTab.style.display = 'none';
-        if (partnerAppsTab) partnerAppsTab.style.display = 'block';
-    } else {
-        adminTab.style.display = 'none';
-        if (adminTicketsTab) adminTicketsTab.style.display = 'none';
-        if (partnerAppsTab) partnerAppsTab.style.display = 'none';
+        // Admin likely sees everything or specific admin view. 
+        // Prompt didn't specify Admin view changes, so we assume Admin sees Admin Tabs + maybe Client tabs?
+        // Let's keep Admin seeing Client stuff + Admin stuff for debug.
     }
 
     const devTab = document.getElementById('developerTab');
@@ -267,7 +328,7 @@ async function loginSuccess(userData, isAutoLogin = false) {
     // Sincronizar Licenças
     await syncLicenses(userData.id);
 
-    loadDashContent('intro');
+    // loadDashContent call moved inside logic above to handle different default pages
 }
 
 async function fetchProducts() {
@@ -339,10 +400,25 @@ async function syncUserSettings(userId) {
                 } catch (e) { console.error("Erro ao aplicar tema sync", e); }
                 changed = true;
             }
+            // Atualiza dados do Discord
+            if (data.discord_id !== undefined) {
+                currentUser.discord_id = data.discord_id;
+                currentUser.discord_username = data.discord_username;
+                currentUser.discord_email = data.discord_email;
+                currentUser.discord_avatar = data.discord_avatar;
+                currentUser.use_discord_avatar = data.use_discord_avatar;
+                changed = true;
+            }
 
             if (changed) {
                 localStorage.setItem('scarlet_user', JSON.stringify(currentUser));
                 console.log("Dados do usuário sincronizados com o servidor.");
+                // Refresh settings UI if it's open
+                if (typeof currentDashTab !== 'undefined' && currentDashTab === 'settings') {
+                    renderSettingsContent();
+                }
+                // Update profile picture if using Discord avatar
+                updateUserProfileUI(currentUser);
             }
         }
     } catch (e) {
@@ -428,6 +504,28 @@ async function loadDashContent(section) {
             renderSettings(container);
             break;
 
+        case 'partner_plans':
+            container.innerHTML = `
+                <h2><i class="fa-solid fa-clipboard-list"></i> Planos de Parceria</h2>
+                <p>Aqui você pode visualizar seus planos e benefícios de parceiro.</p>
+                <div class="status-box">
+                    <h3>Status da Parceria</h3>
+                    <p>Parceria Ativa (Nível 1)</p>
+                </div>
+            `;
+            break;
+
+        case 'partner_manage':
+            container.innerHTML = `
+                <h2><i class="fa-solid fa-list-check"></i> Gerenciar Parceria</h2>
+                <p>Ferramentas de gerenciamento para parceiros.</p>
+                <div style="margin-top: 20px;">
+                    <button class="cta-button">Gerar Link de Indicação</button>
+                    <button class="btn-outline">Ver Estatísticas</button>
+                </div>
+            `;
+            break;
+
         case 'applications':
             if (currentUser.role !== 'partner' && currentUser.role !== 'admin') {
                 container.innerHTML = "<h2>Acesso Negado</h2>";
@@ -458,6 +556,14 @@ async function loadDashContent(section) {
                 return;
             }
             renderAdminTickets(container);
+            break;
+
+        case 'bot_manager':
+            if (currentUser.role !== 'admin') {
+                container.innerHTML = "<h2>Acesso Negado</h2>";
+                return;
+            }
+            await renderBotManager();
             break;
     }
 }
@@ -1597,6 +1703,92 @@ async function updateProfile() {
 
 function showSuccessToast(productName) {
     showNotify('success', `Você acabou de resgatar o <strong>${productName}</strong>!`);
+}
+
+
+
+// --- DISCORD FUNCTIONS ---
+async function linkDiscord() {
+    // Redirect to backend OAuth flow
+    window.location.href = `${API_BASE_URL}/auth/discord/redirect?userId=${currentUser.id}`;
+}
+
+// Check for Discord Link Success on Load
+document.addEventListener('DOMContentLoaded', () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const discordStatus = urlParams.get('discord_linked');
+
+    if (discordStatus === 'success') {
+        showNotify('success', 'Discord vinculado com sucesso!');
+        // Clean URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+        // Force sync user data as background update happened
+        const stored = localStorage.getItem('scarlet_user');
+        if (stored) {
+            const u = JSON.parse(stored);
+            syncUserSettings(u.id).then(() => {
+                // Refresh dashboard if needed (or just let the user nav)
+            });
+        }
+    } else if (discordStatus === 'error') {
+        showNotify('error', 'Erro ao vincular Discord.');
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
+});
+
+async function unlinkDiscord() {
+    if (!confirm("Deseja desvincular sua conta do Discord?")) return;
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/unlink-discord`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUser.id })
+        });
+
+        if (res.ok) {
+            showNotify('success', 'Discord desvinculado.');
+            currentUser.discord_id = null;
+            currentUser.discord_username = null;
+            currentUser.discord_avatar = null;
+            currentUser.use_discord_avatar = false;
+
+            // Revert profile pic if it was using discord
+            // We'll need to sync settings to get the original stored pic or just fallback
+            await syncUserSettings(currentUser.id);
+            loginSuccess(currentUser);
+        }
+    } catch (e) {
+        showNotify('error', 'Erro ao desvincular');
+    }
+}
+
+async function toggleDiscordAvatar(checked) {
+    try {
+        const res = await fetch(`${API_BASE_URL}/toggle-discord-avatar`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUser.id, useAvatar: checked })
+        });
+
+        if (res.ok) {
+            currentUser.use_discord_avatar = checked;
+            // Update profile pic logic
+            if (checked && currentUser.discord_avatar) {
+                currentUser.profile_pic = currentUser.discord_avatar;
+            } else {
+                // Revert -> Sync to get DB value or just reload
+                await syncUserSettings(currentUser.id);
+                return; // Sync handles UI update
+            }
+            localStorage.setItem('scarlet_user', JSON.stringify(currentUser));
+            updateUserProfileUI(currentUser);
+            renderSettingsContent(); // Re-render checkbox state
+        }
+    } catch (e) {
+        console.error(e);
+        showNotify('error', 'Erro ao atualizar');
+    }
 }
 
 // --- FUNÇÕES UTILITÁRIAS PARA OS CARDS NOVOS ---
@@ -3653,8 +3845,32 @@ async function renderSettingsContent() {
                 <button class="cta-button" onclick="updateProfile()" style="width:100%; margin-top:10px;">SALVAR ALTERAÇÕES</button>
                 <p id="updateMsg" style="margin-top:10px; text-align:center;"></p>
             </div>
+
+            <!-- Discord Section -->
+            <div style="margin-top:20px; padding:15px; background: rgba(88, 101, 242, 0.1); border-radius:8px; border: 1px solid rgba(88, 101, 242, 0.3);">
+                <h4 style="color:#5865F2; margin-bottom:10px;"><i class="fa-brands fa-discord"></i> Integração Discord</h4>
+                ${currentUser.discord_id ? `
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <p style="color:white; font-size:0.9rem;">Vinculado como: <strong>${currentUser.discord_username || 'Usuário'}</strong></p>
+                        </div>
+                        <button class="btn-outline" onclick="unlinkDiscord()" style="border-color:#ff4444; color:#ff4444; font-size:0.8rem; padding: 5px 10px;">Desvincular</button>
+                    </div>
+                    <div style="margin-top:10px; display:flex; align-items:center; gap:10px;">
+                        <label class="switch">
+                            <input type="checkbox" ${currentUser.use_discord_avatar ? 'checked' : ''} onchange="toggleDiscordAvatar(this.checked)">
+                            <span class="slider"></span>
+                        </label>
+                        <span style="font-size:0.85rem; color:#ccc;">Usar foto de perfil do Discord</span>
+                    </div>
+                ` : `
+                    <p style="color:#ccc; font-size:0.85rem; margin-bottom:10px;">Vincule sua conta para sincronizar foto e desbloquear benefícios.</p>
+                    <button class="cta-button" onclick="linkDiscord()" style="background:#5865F2; width:100%;"><i class="fa-brands fa-discord"></i> VINCULAR DISCORD</button>
+                `}
+            </div>
         `;
-        const isDark = config.darkMode !== false; // Default true (apenas para leitura se necessário)
+        // const isDark = config.darkMode !== false; 
+        // "config" was undefined. Removed unused logic for this block as isDark is calculated in Appearance tab.
         // Fim do bloco Profile
     } else if (currentSettingsTab === 'appearance') {
         const isDark = (currentUser.theme_config && JSON.parse(currentUser.theme_config).darkMode === false) ? false : true;
@@ -4282,3 +4498,475 @@ async function sendTicketReply(e) {
         alert('Erro de conexão');
     }
 }
+// === BOT MANAGER FUNCTIONS ===
+
+const BOT_TOKEN = ''; // REMOVED FOR SECURITY (GitHub Blocked). Add via UI or backend.
+const BOT_CLIENT_ID = '1467189771762925660';
+let botDocId = null;
+let botGuilds = [];
+
+// Add bot on login
+async function initializeBot() {
+    if (!currentUser) return;
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/bots/add`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                userId: currentUser.id,
+                botToken: BOT_TOKEN
+            })
+        });
+
+        if (res.ok) {
+            const data = await res.json();
+            botDocId = data.id;
+            console.log('✅ Bot inicializado:', data.bot.bot_name);
+            await loadBotGuilds();
+        } else {
+            // Bot may already exist, try to fetch it
+            await fetchExistingBot();
+        }
+    } catch (e) {
+        console.error('Erro ao inicializar bot:', e);
+        await fetchExistingBot();
+    }
+}
+
+async function fetchExistingBot() {
+    try {
+        const res = await fetch(`${API_BASE_URL}/bots/${currentUser.id}`);
+        if (res.ok) {
+            const data = await res.json();
+            if (data.bots && data.bots.length > 0) {
+                botDocId = data.bots[0].id;
+                await loadBotGuilds();
+            }
+        }
+    } catch (e) {
+        console.error('Erro ao buscar bot:', e);
+    }
+}
+
+async function loadBotGuilds() {
+    if (!botDocId) {
+        console.log('⚠️ BotDocId não definido, tentando buscar bot existente...');
+        await fetchExistingBot();
+        if (!botDocId) {
+            console.error('❌ Não foi possível encontrar o bot');
+            return;
+        }
+    }
+
+    try {
+        console.log('Carregando guilds do bot:', botDocId);
+        const res = await fetch(`${API_BASE_URL}/bots/${botDocId}/guilds`);
+        if (res.ok) {
+            const data = await res.json();
+            botGuilds = data.guilds || [];
+            console.log('✅ Guilds carregadas:', botGuilds.length, botGuilds);
+        } else {
+            console.error('❌ Erro ao carregar guilds:', res.status, await res.text());
+        }
+    } catch (e) {
+        console.error('❌ Erro ao carregar servidores:', e);
+    }
+}
+
+async function renderBotManager() {
+    const content = document.getElementById('dashDynamicContent');
+    if (!content) return;
+
+    // Reload guilds to get fresh data
+    await loadBotGuilds();
+
+    console.log('Renderizando Bot Manager. Guilds disponíveis:', botGuilds.length);
+
+    const html = `
+        <div class="bot-manager-container">
+            <h2><i class="fa-brands fa-discord"></i> Discord Bot Manager</h2>
+            
+            <div class="bot-actions">
+                <div class="action-card">
+                    <h3><i class="fa-solid fa-paper-plane"></i> Enviar Mensagem</h3>
+                    <p>Envie uma mensagem para qualquer canal do Discord</p>
+                    
+                    <div class="form-group">
+                        <label>Servidor</label>
+                        <select id="msgGuildSelect" onchange="updateChannelList()">
+                            <option value="">Selecione um servidor</option>
+                            ${botGuilds.map(g => `<option value="${g.id}">${g.name}</option>`).join('')}
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Canal</label>
+                        <select id="msgChannelSelect">
+                            <option value="">Selecione um servidor primeiro</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Mensagem</label>
+                        <textarea id="msgContent" rows="4" placeholder="Digite sua mensagem aqui..."></textarea>
+                    </div>
+                    
+                    <button onclick="sendDiscordMessage()" class="btn-primary">
+                        <i class="fa-solid fa-paper-plane"></i> Enviar Mensagem
+                    </button>
+                </div>
+                
+                <div class="action-card">
+                    <h3><i class="fa-solid fa-user-plus"></i> Adicionar Membro</h3>
+                    <p>Adicione usuários verificados ao servidor Discord</p>
+                    
+                    <div class="form-group">
+                        <label>Servidor</label>
+                        <select id="addMemberGuildSelect">
+                            <option value="">Selecione um servidor</option>
+                            ${botGuilds.map(g => `<option value="${g.id}">${g.name}</option>`).join('')}
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Usuário</label>
+                        <select id="addMemberUserSelect">
+                            <option value="">Carregando usuários...</option>
+                        </select>
+                        <small>Selecione um usuário com Discord vinculado</small>
+                    </div>
+                    
+                    <button onclick="addMemberToGuild()" class="btn-primary">
+                        <i class="fa-solid fa-user-plus"></i> Adicionar ao Servidor
+                    </button>
+                    
+                    <button onclick="addAllMembersToGuild()" class="btn-secondary" style="margin-top: 10px;">
+                        <i class="fa-solid fa-users"></i> Puxar Todos
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <style>
+            .bot-manager-container {
+                padding: 20px;
+            }
+            
+            .bot-manager-container h2 {
+                color: #5865f2;
+                margin-bottom: 30px;
+            }
+            
+            .bot-actions {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+                gap: 20px;
+            }
+            
+            .action-card {
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 60, 60, 0.2);
+                border-radius: 8px;
+                padding: 24px;
+            }
+            
+            .action-card h3 {
+                color: #fff;
+                margin-bottom: 8px;
+                font-size: 20px;
+            }
+            
+            .action-card p {
+                color: #888;
+                margin-bottom: 20px;
+                font-size: 14px;
+            }
+            
+            .form-group {
+                margin-bottom: 16px;
+            }
+            
+            .form-group label {
+                display: block;
+                color: #fff;
+                margin-bottom: 8px;
+                font-weight: 500;
+            }
+            
+            .form-group select,
+            .form-group input,
+            .form-group textarea {
+                width: 100%;
+                padding: 12px;
+                background: rgba(0, 0, 0, 0.3);
+                border: 1px solid rgba(255, 60, 60, 0.3);
+                border-radius: 4px;
+                color: #fff;
+                font-family: inherit;
+            }
+            
+            .form-group small {
+                color: #888;
+                font-size: 12px;
+                display: block;
+                margin-top: 4px;
+            }
+            
+            .form-group textarea {
+                resize: vertical;
+                min-height: 100px;
+            }
+            
+            .btn-primary {
+                background: #5865f2;
+                color: white;
+                padding: 12px 24px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 600;
+                transition: all 0.2s;
+                width: 100%;
+            }
+            
+            .btn-primary:hover {
+                background: #4752c4;
+                transform: translateY(-2px);
+            }
+            
+            .btn-primary i {
+                margin-right: 8px;
+            }
+            
+            .btn-secondary {
+                background: rgba(255, 60, 60, 0.2);
+                color: #ff3c3c;
+                padding: 12px 24px;
+                border: 1px solid #ff3c3c;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 600;
+                transition: all 0.2s;
+                width: 100%;
+            }
+            
+            .btn-secondary:hover {
+                background: rgba(255, 60, 60, 0.3);
+                transform: translateY(-2px);
+            }
+            
+            .btn-secondary i {
+                margin-right: 8px;
+            }
+        </style>
+    `;
+
+    content.innerHTML = html;
+
+    // Load Discord users after rendering
+    await loadDiscordUsers();
+}
+
+function updateChannelList() {
+    const guildSelect = document.getElementById('msgGuildSelect');
+    const channelSelect = document.getElementById('msgChannelSelect');
+
+    if (!guildSelect || !channelSelect) return;
+
+    const selectedGuildId = guildSelect.value;
+    const guild = botGuilds.find(g => g.id === selectedGuildId);
+
+    if (!guild || !guild.channels) {
+        channelSelect.innerHTML = '<option value="">Nenhum canal encontrado</option>';
+        return;
+    }
+
+    channelSelect.innerHTML = '<option value="">Selecione um canal</option>' +
+        guild.channels.map(c => `<option value="${c.id}">#${c.name}</option>`).join('');
+}
+
+async function sendDiscordMessage() {
+    const channelId = document.getElementById('msgChannelSelect').value;
+    const message = document.getElementById('msgContent').value;
+
+    if (!channelId || !message) {
+        showNotify('error', 'Preencha todos os campos');
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/bots/${botDocId}/send-message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channelId, message })
+        });
+
+        if (res.ok) {
+            showNotify('success', 'Mensagem enviada com sucesso!');
+            document.getElementById('msgContent').value = '';
+        } else {
+            showNotify('error', 'Erro ao enviar mensagem');
+        }
+    } catch (e) {
+        console.error(e);
+        showNotify('error', 'Erro ao enviar mensagem');
+    }
+}
+
+async function addMemberToGuild() {
+    const guildId = document.getElementById('addMemberGuildSelect').value;
+    const userSelect = document.getElementById('addMemberUserSelect');
+    const selectedUserId = userSelect.value; // This is the Firestore document ID
+
+    if (!guildId || !selectedUserId) {
+        showNotify('error', 'Preencha todos os campos');
+        return;
+    }
+
+    // Get username for display
+    const selectedOption = userSelect.options[userSelect.selectedIndex];
+    const username = selectedOption.dataset.username;
+
+    showNotify('info', `Adicionando ${username}...`);
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/bots/${botDocId}/add-member`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                guildId,
+                userId: selectedUserId // Send Firestore document ID, server will fetch discord_id and access_token
+            })
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+            showNotify('success', data.message);
+        } else {
+            showNotify('error', data.message || 'Erro ao adicionar membro');
+        }
+    } catch (e) {
+        console.error(e);
+        showNotify('error', 'Erro ao adicionar membro');
+    }
+}
+
+async function addAllMembersToGuild() {
+    const guildId = document.getElementById('addMemberGuildSelect').value;
+    const userSelect = document.getElementById('addMemberUserSelect');
+
+    if (!guildId) {
+        showNotify('error', 'Selecione um servidor primeiro');
+        return;
+    }
+
+    // Get all user IDs from the select options (except first empty option)
+    const userIds = Array.from(userSelect.options)
+        .filter(opt => opt.value) // Skip empty option
+        .map(opt => opt.value);
+
+    if (userIds.length === 0) {
+        showNotify('error', 'Nenhum usuário com Discord vinculado');
+        return;
+    }
+
+    const confirmMsg = `Deseja adicionar ${userIds.length} usuário(s) ao servidor?`;
+    if (!confirm(confirmMsg)) return;
+
+    showNotify('info', `Adicionando ${userIds.length} membros...`);
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/bots/${botDocId}/add-members-bulk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ guildId, userIds })
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+            const successCount = data.results.success.length;
+            const failedCount = data.results.failed.length;
+            showNotify('success', `✅ ${successCount} adicionados, ❌ ${failedCount} falharam`);
+            console.log('Resultados detalhados:', data.results);
+        } else {
+            showNotify('error', data.message || 'Erro ao adicionar membros');
+        }
+    } catch (e) {
+        console.error(e);
+        showNotify('error', 'Erro ao adicionar membros');
+    }
+}
+
+async function loadDiscordUsers() {
+    console.log('🔍 Iniciando carregamento de usuários Discord...');
+    try {
+        const res = await fetch(`${API_BASE_URL}/users/discord-linked`);
+        console.log('📡 Response status:', res.status);
+
+        if (res.ok) {
+            const data = await res.json();
+            console.log('📦 Data received:', data);
+
+            const userSelect = document.getElementById('addMemberUserSelect');
+            if (!userSelect) {
+                console.error('❌ Elemento addMemberUserSelect não encontrado!');
+                return;
+            }
+
+            if (data.users.length === 0) {
+                console.warn('⚠️ Nenhum usuário com Discord vinculado encontrado');
+                userSelect.innerHTML = '<option value="">Nenhum usuário com Discord vinculado</option>';
+                return;
+            }
+
+            userSelect.innerHTML = '<option value="">Selecione um usuário</option>' +
+                data.users.map(u => `
+                    <option 
+                        value="${u.id}" 
+                        data-discord-id="${u.discord_id}"
+                        data-username="${u.username}">
+                        ${u.username} (@${u.discord_username || 'N/A'})
+                    </option>
+                `).join('');
+
+            console.log(`✅ ${data.users.length} usuários com Discord carregados`);
+        } else {
+            console.error('❌ Erro na resposta:', res.status, await res.text());
+        }
+    } catch (e) {
+        console.error('❌ Erro ao carregar usuários Discord:', e);
+    }
+}
+
+// === BOT MANAGER AUTO-INIT ===
+// Enable Bot Manager tab and initialize bot for admins
+(function () {
+    // Wait for DOM and user to be loaded
+    const checkAndInit = () => {
+        if (currentUser && currentUser.role === 'admin') {
+            // Enable Bot Manager tab
+            const botTab = document.getElementById('botManagerTab');
+            if (botTab) {
+                botTab.style.display = 'block';
+            }
+            // Don't auto-initialize bot to prevent rate limiting
+            // User can manually trigger it by opening the Bot Manager tab
+            /*
+            if (typeof initializeBot === 'function') {
+                initializeBot();
+            }
+            */
+        }
+    };
+
+    // Check immediately if already loaded
+    if (typeof currentUser !== 'undefined' && currentUser) {
+        checkAndInit();
+    }
+
+    // Also check after a short delay to catch late initialization
+    setTimeout(checkAndInit, 2000);
+})();

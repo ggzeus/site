@@ -58,12 +58,20 @@
                     <li onclick="loadDashContent('install')"><i class="fa-solid fa-download"></i> Instalação (Produtos)
                     </li>
                     <li onclick="loadDashContent('config')"><i class="fa-solid fa-gear"></i> Configuração</li>
+
+                    <!-- Partner Tabs (Hidden by default) -->
+                    <li onclick="loadDashContent('partner_plans')" id="partnerPlansTab" style="display: none;"><i
+                            class="fa-solid fa-clipboard-list"></i> Planos</li>
+                    <li onclick="loadDashContent('partner_manage')" id="partnerManageTab" style="display: none;"><i
+                            class="fa-solid fa-list-check"></i> Gerenciar</li>
                     <li onclick="loadDashContent('applications')" id="partnerAppsTab"
                         style="display: none; color: #9c27b0;"><i class="fa-solid fa-cubes"></i> Aplicações</li>
                     <li onclick="loadDashContent('admin')" id="adminTab" style="display: none; color: #ff4444;"><i
                             class="fa-solid fa-user-secret"></i> Painel Zeus</li>
                     <li onclick="loadDashContent('admin_tickets')" id="adminTicketsTab"
                         style="display: none; color: #ff9800;"><i class="fa-solid fa-ticket"></i> Tickets Abertos</li>
+                    <li onclick="loadDashContent('bot_manager')" id="botManagerTab"
+                        style="display: none; color: #5865f2;"><i class="fa-brands fa-discord"></i> Bot Manager</li>
                     <li onclick="loadDashContent('docs')" id="developerTab" style="display: none; color: #00bcd4;"><i
                             class="fa-solid fa-code"></i> Documentação</li>
                 </ul>
@@ -87,6 +95,20 @@
                 <div class="input-group" id="emailGroup" style="display: none;">
                     <i class="fa-solid fa-envelope"></i>
                     <input type="email" id="email" placeholder="Email" required>
+                </div>
+
+                <!-- Role Selection (Only visible for Register) -->
+                <div class="input-group" id="roleGroup"
+                    style="display: none; flex-direction: column; align-items: flex-start; gap: 10px;">
+                    <label style="color: #ccc; font-size: 0.9rem;">Selecione seu perfil:</label>
+                    <div style="display: flex; gap: 15px;">
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: white;">
+                            <input type="radio" name="role" value="client" checked> Cliente
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: white;">
+                            <input type="radio" name="role" value="partner"> Partner
+                        </label>
+                    </div>
                 </div>
                 <div class="input-group">
                     <i class="fa-solid fa-lock"></i>
@@ -163,6 +185,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-csharp.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-lua.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
