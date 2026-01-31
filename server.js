@@ -19,6 +19,7 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
+
 const app = express();
 app.use(cors()); // Enable CORS for all roots (simplifies Netlify access)
 const server = http.createServer(app);
@@ -154,18 +155,22 @@ app.post('/update-profile', async (req, res) => {
         if (newPassword) updates.password = await bcrypt.hash(newPassword, 10);
 
         if (profilePic) {
-            // Check if it's base64 and save to file to avoid Firestore 1MB limit
+            // Store base64 image directly in Firestore (compressed)
             if (profilePic.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/)) {
-                const matches = profilePic.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
-                const extension = matches[1];
-                const data = matches[2];
-                const buffer = Buffer.from(data, 'base64');
-                const filename = `profile_${userId}_${Date.now()}.${extension}`;
-                const filePath = path.join(uploadsDir, filename);
+                // Validate size (Firestore has 1MB document limit)
+                const sizeInBytes = (profilePic.length * 3) / 4;
+                const sizeInMB = sizeInBytes / (1024 * 1024);
 
-                // Save to disk (sync to keep simple within async wrapper, or use promise)
-                await fs.promises.writeFile(filePath, buffer);
-                updates.profile_pic = `/uploads/${filename}`;
+                if (sizeInMB > 0.9) {
+                    // Image too large - reject with helpful message
+                    return res.status(400).json({
+                        message: "Imagem muito grande. Por favor, use uma imagem menor (máximo ~800KB).",
+                        hint: "Comprima a imagem ou use uma resolução menor antes de enviar."
+                    });
+                }
+
+                // Store the base64 string directly in Firestore
+                updates.profile_pic = profilePic;
             } else {
                 // Already a URL or small string
                 updates.profile_pic = profilePic;

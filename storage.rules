@@ -1,0 +1,15 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Profile pictures - public read, server-only write
+    match /profile_pics/{allPaths=**} {
+      allow read: if true;  // Anyone can read (public URLs)
+      allow write: if false; // Only Admin SDK can write (from server)
+    }
+    
+    // Default rule for other paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

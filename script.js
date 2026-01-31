@@ -3,7 +3,7 @@
 // Se estiver em produção (Netlify), DEVE ser a URL do seu backend no Render/Railway
 const API_BASE_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     ? ''
-    : 'https://SEU-BACKEND-AQUI.onrender.com'; // <--- ALTERE ISSO DEPOIS DE HOSPEDAR O BACKEND
+    : ''; // PRODUÇÃO: COLOQUE A URL DO SEU BACKEND AQUI (ex: 'https://seu-backend.discloud.app')
 
 let currentMode = 'login';
 let currentUser = null;
@@ -1909,7 +1909,7 @@ function showCompDetails(base64Json) {
 async function loadAppOverview(appId, container) {
     container.innerHTML = '<div class="loading-spinner"></div>';
     try {
-        const res = await fetch(`/ api / app / ${appId} / stats`);
+        const res = await fetch(`/api/app/${appId}/stats`);
         const stats = await res.json();
 
         container.innerHTML = `
@@ -2009,7 +2009,7 @@ async function loadAppKeys(appId, container) {
         `;
 
     try {
-        const res = await fetch(`/ api / app / ${appId}/keys`);
+        const res = await fetch(`/api/app/${appId}/keys`);
         const data = await res.json();
         const tbody = document.getElementById('keysTableBody');
 
@@ -3234,83 +3234,210 @@ function escapeHtml(text) {
 
 // --- DEVELOPER DOCS & AI FUNCTIONS ---
 
-function renderDevDocs(container) {
+// --- API DOCS DATA & HELPERS ---
+const apiDocsData = [
+    // AUTHENTICATION
+    {
+        category: 'Autenticação (Client)',
+        endpoints: [
+            {
+                method: 'POST', path: '/auth/login', desc: 'Realiza login do cliente na aplicação.',
+                body: { app_id: 'SEU_APP_ID', key: 'USER_LICENSE_KEY', hwid: 'USER_HWID' }
+            },
+            {
+                method: 'POST', path: '/auth/init', desc: 'Inicializa a handshake/sessão segura.',
+                body: { app_id: 'SEU_APP_ID', session_id: 'SESSION_ID', enc_key: 'ENCRYPTED_KEY' }
+            },
+            {
+                method: 'POST', path: '/auth/license', desc: 'Ativa/Resgata uma licença.',
+                body: { app_id: 'SEU_APP_ID', key: 'NEW_KEY', hwid: 'USER_HWID' }
+            },
+            {
+                method: 'POST', path: '/auth/hwid', desc: 'Registra ou valida HWID.',
+                body: { app_id: 'SEU_APP_ID', user_id: 'USER_ID', hwid: 'NEW_HWID' }
+            },
+            {
+                method: 'POST', path: '/auth/log-login', desc: 'Registra log de login.',
+                body: { app_id: 'SEU_APP_ID', user_id: 'USER_ID', ip: 'USER_IP', action: 'login' }
+            }
+        ]
+    },
+    // APP MANAGEMENT
+    {
+        category: 'Gestão de Aplicações',
+        endpoints: [
+            {
+                method: 'POST', path: '/api/app/create', desc: 'Cria uma nova aplicação (Partners).',
+                body: { userId: 'YOUR_USER_ID', name: 'New App Name' }
+            },
+            {
+                method: 'GET', path: '/api/app/:appId/stats', desc: 'Retorna estatísticas da app.',
+                params: { appId: 'APP_ID' }
+            },
+            {
+                method: 'GET', path: '/api/app/:appId/keys', desc: 'Lista todas as chaves.',
+                params: { appId: 'APP_ID' }
+            },
+            {
+                method: 'POST', path: '/api/app/:appId/keys/generate', desc: 'Gera chaves em lote.',
+                body: { userId: 'YOUR_USER_ID', count: 10, days: 30, level: 1 }
+            },
+            {
+                method: 'DELETE', path: '/api/app/:appId/keys/:keyId', desc: 'Deleta uma chave específica.',
+                body: { userId: 'YOUR_USER_ID' }
+            },
+            {
+                method: 'POST', path: '/api/app/:appId/blacklist', desc: 'Adiciona usuário à blacklist.',
+                body: { userId: 'YOUR_USER_ID', targetUser: 'TARGET_USERNAME', reason: 'Abuse' }
+            }
+        ]
+    },
+    // GENERAL
+    {
+        category: 'Geral',
+        endpoints: [
+            {
+                method: 'GET', path: '/products', desc: 'Retorna lista de produtos da loja.',
+                params: {}
+            },
+            {
+                method: 'GET', path: '/posts', desc: 'Feed de notícias/posts.',
+                params: {}
+            },
+            {
+                method: 'GET', path: '/api/check-user', desc: 'Verifica existência de usuário.',
+                params: { username: 'USER_TESTE' }
+            }
+        ]
+    }
+];
+
+// Helper to generate snippet based on language and endpoint data
+function getApiSnippet(lang, ep) {
     const baseUrl = API_BASE_URL || window.location.origin;
+    const url = `${baseUrl}${ep.path}`;
 
-    // Snippets templates
-    const snippets = {
-        javascript: `// Exemplo 1: Check User
-fetch('${baseUrl}/api/check-user?username=USER_TESTE', {
+    if (lang === 'javascript') {
+        if (ep.method === 'GET') {
+            const query = ep.params ? '?' + new URLSearchParams(ep.params).toString() : '';
+            return `fetch('${url}${query}', {
+    method: 'GET',
     headers: { 'x-dev-token': '${currentUser.dev_token}' }
-}).then(res => res.json()).then(console.log);
+}).then(res => res.json()).then(console.log);`;
+        } else {
+            return `fetch('${url}', {
+    method: '${ep.method}',
+    headers: { 
+        'Content-Type': 'application/json',
+        'x-dev-token': '${currentUser.dev_token}'
+    },
+    body: JSON.stringify(${JSON.stringify(ep.body, null, 4)})
+}).then(res => res.json()).then(console.log);`;
+        }
+    }
 
-// Exemplo 2: Check Foto
-fetch('${baseUrl}/api/check-foto?dev-token=${currentUser.dev_token}&user=USER_ALVO')
-  .then(res => res.json())
-  .then(console.log);`,
-
-        python: `# Exemplo 1: Check User
-import requests
-
-url = '${baseUrl}/api/check-user'
+    if (lang === 'python') {
+        if (ep.method === 'GET') {
+            return `import requests
+url = '${url}'
 headers = {'x-dev-token': '${currentUser.dev_token}'}
-params = {'username': 'USER_TESTE'}
-response = requests.get(url, headers=headers, params=params)
-print(response.json())
+params = ${JSON.stringify(ep.params || {})}
+r = requests.get(url, headers=headers, params=params)
+print(r.json())`;
+        } else {
+            return `import requests
+url = '${url}'
+headers = {'x-dev-token': '${currentUser.dev_token}'}
+data = ${JSON.stringify(ep.body || {})}
+r = requests.${ep.method.toLowerCase()}(url, headers=headers, json=data)
+print(r.json())`;
+        }
+    }
 
-# Exemplo 2: Check Foto
-url2 = '${baseUrl}/api/check-foto'
-params2 = {'dev-token': '${currentUser.dev_token}', 'user': 'USER_ALVO'}
-r = requests.get(url2, params=params2)
-print(r.json())`,
-
-        csharp: `using System.Net.Http;
+    if (lang === 'csharp') {
+        if (ep.method === 'GET') {
+            return `using System.Net.Http;
+var client = new HttpClient();
+client.DefaultRequestHeaders.Add("x-dev-token", "${currentUser.dev_token}");
+var response = await client.GetAsync("${url}");
+var content = await response.Content.ReadAsStringAsync();
+Console.WriteLine(content);`;
+        } else {
+            return `using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 
 var client = new HttpClient();
 client.DefaultRequestHeaders.Add("x-dev-token", "${currentUser.dev_token}");
-var response = await client.GetAsync("${baseUrl}/api/check-user?username=USER_TESTE");
-var content = await response.Content.ReadAsStringAsync();
-Console.WriteLine(content);`,
+var json = JsonSerializer.Serialize(new ${JSON.stringify(ep.body).replace(/{|}/g, '').replace(/"/g, '') /* Simple mock convert */});
+// Note: Fix C# serialization object manually
+var content = new StringContent("${JSON.stringify(ep.body).replace(/"/g, '\\"')}", Encoding.UTF8, "application/json");
+var response = await client.${ep.method === 'POST' ? 'PostAsync' : 'PutAsync'}("${url}", content);
+var result = await response.Content.ReadAsStringAsync();
+Console.WriteLine(result);`;
+        }
+    }
 
-        cpp: `// Usando CPR (C++ Requests)
+    if (lang === 'cpp') {
+        return `// Requires CPR Library
 #include <cpr/cpr.h>
 #include <iostream>
 
 int main() {
-    auto r = cpr::Get(cpr::Url{"${baseUrl}/api/check-user"},
-                      cpr::Parameters{{"username", "USER_TESTE"}},
-                      cpr::Header{{"x-dev-token", "${currentUser.dev_token}"}});
+    cpr::Response r = cpr::${ep.method === 'GET' ? 'Get' : 'Post'}(cpr::Url{"${url}"},
+                      cpr::Header{{"x-dev-token", "${currentUser.dev_token}"}}${ep.method !== 'GET' ? `,
+                      cpr::Body{"${JSON.stringify(ep.body).replace(/"/g, '\\"')}"},
+                      cpr::Header{{"Content-Type", "application/json"}}` : ''});
     std::cout << r.text << std::endl;
     return 0;
-}`,
-        lua: `-- Exemplo FiveM / Scarlet Script
-PerformHttpRequest('${baseUrl}/api/check-user?username=USER_TESTE', function(err, text, headers)
-    print(text)
-end, 'GET', '', { ['x-dev-token'] = '${currentUser.dev_token}' })`,
+}`;
+    }
 
-        // Novo endpoint Check Foto
-        checkfoto_js: `// Javascript - Obter Foto de Perfil
-fetch('${baseUrl}/api/check-foto?dev-token=${currentUser.dev_token}&user=USER_ALVO')
-  .then(res => res.json())
-  .then(data => {
-      if(data.status === 'success') console.log("Foto:", data.url);
-  });`,
+    return `// Language ${lang} not implemented for this snippet yet.`;
+}
 
-        checkfoto_py: `# Python - Obter Foto de Perfil
-import requests
-url = '${baseUrl}/api/check-foto'
-params = {'dev-token': '${currentUser.dev_token}', 'user': 'USER_ALVO'}
-r = requests.get(url, params=params)
-print(r.json()['url'])`
-    };
+function toggleApiDetail(id) {
+    const detail = document.getElementById(`api-detail-${id}`);
+    const icon = document.getElementById(`api-icon-${id}`);
+    if (detail.style.display === 'none') {
+        detail.style.display = 'block';
+        icon.classList.remove('fa-chevron-down');
+        icon.classList.add('fa-chevron-up');
+        // Trigger highlight when shown
+        const codeEl = document.getElementById(`code-${id}`);
+        if (codeEl) Prism.highlightElement(codeEl);
+    } else {
+        detail.style.display = 'none';
+        icon.classList.remove('fa-chevron-up');
+        icon.classList.add('fa-chevron-down');
+    }
+}
 
-    const currentCode = snippets[currentDocLang] || snippets['javascript'];
+function switchApiItemLang(id, lang, method, path, bodyStr, paramsStr) {
+    const [catIdx, epIdx] = id.split('-').map(Number);
+    const ep = apiDocsData[catIdx].endpoints[epIdx];
 
+    const snippet = getApiSnippet(lang, ep);
+    const codeEl = document.getElementById(`code-${id}`);
+
+    // Update text and class
+    codeEl.textContent = snippet;
+    const prismLang = lang === 'csharp' ? 'csharp' : (lang === 'cpp' ? 'cpp' : (lang === 'python' ? 'python' : 'javascript'));
+    codeEl.className = `language-${prismLang}`;
+
+    Prism.highlightElement(codeEl);
+
+    // Update active tab
+    document.querySelectorAll(`.lang-btn-${id}`).forEach(btn => btn.classList.remove('active'));
+    document.getElementById(`btn-${id}-${lang}`).classList.add('active');
+}
+
+function renderDevDocs(container) {
     container.innerHTML = `
         <h2><i class="fa-solid fa-code"></i> Documentação para Desenvolvedores</h2>
         
         <!-- TOKEN SECTION -->
-        <div class="status-box" style="border-left-color: #ff1e1e;">
+         <div class="status-box" style="border-left-color: #ff1e1e;">
             <h3>Seu Token de Desenvolvedor</h3>
             <p style="color:#888; font-size:0.9rem;">Token secreto. Não compartilhe.</p>
             <div class="input-group" style="margin-top:10px;">
@@ -3318,49 +3445,75 @@ print(r.json()['url'])`
             </div>
         </div>
 
-        <!-- LANGUAGE SELECTOR -->
-        <div style="margin-top:30px;">
-            <h3>Exemplos de Integração</h3>
-            <div class="community-subtabs" style="justify-content: flex-start; gap: 10px; margin-bottom: 10px;">
-                ${['javascript', 'python', 'csharp', 'cpp', 'lua'].map(lang => `
-                    <button class="subtab-btn ${currentDocLang === lang ? 'active' : ''}" 
-                            onclick="switchDocLang('${lang}')"
-                            style="padding: 5px 15px; font-size: 0.8rem;">
-                        ${lang.toUpperCase().replace('CSHARP', 'C#').replace('CPP', 'C++')}
-                    </button>
-                `).join('')}
-            </div>
+        <!-- API LIST -->
+        <div class="api-list-section" style="margin-top:30px;">
+            <h3><i class="fa-solid fa-book"></i> Endpoints Disponíveis</h3>
+            <p style="color:#888; margin-bottom:20px; font-size:0.9rem;">Clique nos itens para ver exemplos de integração.</p>
+            
+            ${apiDocsData.map((cat, catIdx) => `
+                <div class="api-group" style="margin-bottom:30px;">
+                    <h4 style="color:#fff; margin-bottom:15px; border-bottom:1px solid #333; padding-bottom:5px;">${cat.category}</h4>
+                    ${cat.endpoints.map((ep, epIdx) => {
+        const id = `${catIdx}-${epIdx}`;
+        const methodColors = { 'POST': '#4caf50', 'GET': '#2196f3', 'DELETE': '#f44336', 'PUT': '#ff9800' };
+        const color = methodColors[ep.method] || '#777';
+        const defaultSnippet = getApiSnippet('javascript', ep);
 
-            <div style="background:#1e1e1e; padding:15px; border-radius:8px; border:1px solid #333; position:relative;">
-                <button onclick="copyCodeSnippet()" style="position:absolute; top:10px; right:10px; background:transparent; border:none; color:#aaa; cursor:pointer;" title="Copiar"><i class="fa-regular fa-copy"></i></button>
-                <pre id="codeSnippetDisplay" style="font-family:monospace; font-size:0.85rem; color:#dcdcdc; overflow-x:auto; margin:0;">${currentCode}</pre>
-            </div>
+        return `
+                        <div class="api-item-box" style="margin-bottom:10px; border:1px solid #333; border-radius:6px; overflow:hidden;">
+                            <!-- Header -->
+                            <div class="api-item-header" onclick="toggleApiDetail('${id}')" 
+                                 style="background:#1a1a1a; padding:15px; cursor:pointer; display:flex; align-items:center; justify-content:space-between; transition:background 0.2s;">
+                                <div style="display:flex; align-items:center; gap:15px;">
+                                    <span style="background:${color}; color:#fff; padding:3px 8px; border-radius:4px; font-weight:bold; font-size:0.75rem; min-width:60px; text-align:center;">${ep.method}</span>
+                                    <code style="color:#fff; font-size:0.95rem; font-family:'JetBrains Mono', monospace;">${ep.path}</code>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:15px;">
+                                    <span style="color:#888; font-size:0.85rem;">${ep.desc}</span>
+                                    <i id="api-icon-${id}" class="fa-solid fa-chevron-down" style="color:#666;"></i>
+                                </div>
+                            </div>
+                            
+                            <!-- Detailed Body (Hidden) -->
+                            <div id="api-detail-${id}" style="display:none; background:#111; border-top:1px solid #333;">
+                                <div style="padding:15px;">
+                                    <div style="display:flex; gap:10px; margin-bottom:10px;">
+                                        ${['javascript', 'python', 'csharp', 'cpp'].map(lang => `
+                                            <button id="btn-${id}-${lang}" class="subtab-btn lang-btn-${id} ${lang === 'javascript' ? 'active' : ''}" 
+                                                onclick="switchApiItemLang('${id}', '${lang}')"
+                                                style="padding:4px 12px; font-size:0.8rem;">
+                                                ${lang.toUpperCase()}
+                                            </button>
+                                        `).join('')}
+                                    </div>
+                                    <div style="position:relative; background:#0d0d0d; border-radius:6px; border:1px solid #333;">
+                                         <button onclick="navigator.clipboard.writeText(document.getElementById('code-${id}').textContent).then(()=>alert('Copiado!'))" 
+                                                 style="position:absolute; top:10px; right:10px; background:transparent; border:none; color:#aaa; cursor:pointer;">
+                                            <i class="fa-regular fa-copy"></i>
+                                         </button>
+                                         <pre style="margin:0; padding:15px; border-radius:6px; overflow:auto;"><code id="code-${id}" class="language-javascript" style="font-family:'JetBrains Mono', monospace; font-size:0.85rem;">${defaultSnippet}</code></pre>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        `;
+    }).join('')}
+                </div>
+            `).join('')}
         </div>
 
-        <!-- AI HELPER WIDGET -->
-
-        <!-- AI HELPER WIDGET (DISABLED) -->
-        <!--
-        <div style="margin-top: 40px; border-top: 2px solid #333; padding-top: 20px;">
-            <h3><i class="fa-solid fa-robot" style="color:#a468d6;"></i> IA Helper (Scarlet Support)</h3>
-            <div id="aiChatBox" style="height: 250px; background: #111; border: 1px solid #333; border-radius: 8px; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px;">
-                ${devChatMessages.map(msg => `
-                    <div style="align-self: ${msg.role === 'user' ? 'flex-end' : 'flex-start'}; 
-                                background: ${msg.role === 'user' ? '#0078d4' : '#2d2d30'}; 
-                                color: white; padding: 8px 12px; border-radius: 15px; max-width: 80%; font-size: 0.9rem;">
-                        ${msg.text}
-                    </div>
-                `).join('')}
-            </div>
-            <form onsubmit="handleAiChatSubmit(event)" style="margin-top: 10px; display: flex; gap: 10px;">
-                <input type="text" id="aiChatInput" placeholder="Pergunte sobre a API ou peça um exemplo..." style="flex: 1; padding: 10px; background: #222; border: 1px solid #444; color: white; border-radius: 5px;">
-                <button type="submit" class="cta-button" style="width: auto; padding: 0 20px;"><i class="fa-solid fa-paper-plane"></i></button>
-            </form>
+        <!-- DOCS BUTTON (Github Style) -->
+        <div style="margin-top:50px; text-align:center; padding-bottom:30px;">
+            <a href="#" onclick="alert('Documentação externa em breve!'); return false;" class="github-docs-btn" 
+               style="display:inline-flex; align-items:center; gap:10px; background:#24292e; color:white; padding:12px 25px; border-radius:6px; text-decoration:none; font-weight:600; border:1px solid #444; transition:all 0.2s;">
+                <i class="fa-brands fa-github" style="font-size:1.2rem;"></i>
+                <span>Ver Documentação Completa</span>
+            </a>
+            <p style="color:#666; font-size:0.8rem; margin-top:10px;">Consulte a wiki para detalhes de implementação.</p>
         </div>
-        -->
     `;
 
-    // Scroll chat to bottom
+    // Scroll chat to bottom (if exists)
     const chatBox = document.getElementById('aiChatBox');
     if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
 }
@@ -3589,16 +3742,102 @@ async function renderSettingsContent() {
 async function handleProfileUploadLocal(input) {
     if (input.files && input.files[0]) {
         const file = input.files[0];
-        const reader = new FileReader();
 
-        reader.onload = function (e) {
-            const base64Info = e.target.result;
-            document.getElementById('profilePreview').src = base64Info;
-            // Store for saving later
-            pendingProfilePic = base64Info;
+        // Validate file type
+        if (!file.type.startsWith('image/')) {
+            showNotify('error', 'Por favor, selecione uma imagem válida.');
+            return;
         }
+
+        const reader = new FileReader();
+        reader.onload = async function (e) {
+            const originalBase64 = e.target.result;
+
+            // Check original size
+            const originalSizeBytes = (originalBase64.length * 3) / 4;
+            const originalSizeMB = originalSizeBytes / (1024 * 1024);
+
+            console.log(`Imagem original: ${originalSizeMB.toFixed(2)} MB`);
+
+            // Compress if needed (target: under 800KB for Firestore)
+            const maxSizeMB = 0.8; // 800KB
+
+            if (originalSizeMB > maxSizeMB) {
+                showNotify('info', 'Comprimindo imagem...');
+
+                try {
+                    const compressedBase64 = await compressImage(originalBase64, maxSizeMB);
+                    const compressedSizeMB = (compressedBase64.length * 3 / 4) / (1024 * 1024);
+                    console.log(`Imagem comprimida: ${compressedSizeMB.toFixed(2)} MB`);
+
+                    if (compressedSizeMB > 0.9) {
+                        showNotify('error', 'Imagem muito grande mesmo após compressão. Use uma imagem menor.');
+                        return;
+                    }
+
+                    document.getElementById('profilePreview').src = compressedBase64;
+                    pendingProfilePic = compressedBase64;
+                    showNotify('success', `Imagem otimizada! (${compressedSizeMB.toFixed(2)} MB)`);
+                } catch (error) {
+                    console.error('Erro ao comprimir:', error);
+                    showNotify('error', 'Erro ao processar imagem. Tente uma imagem menor.');
+                }
+            } else {
+                // Image already small enough
+                document.getElementById('profilePreview').src = originalBase64;
+                pendingProfilePic = originalBase64;
+                showNotify('success', 'Imagem carregada!');
+            }
+        };
         reader.readAsDataURL(file);
     }
+}
+
+// Helper function to compress image
+function compressImage(base64, maxSizeMB) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = function () {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Calculate new dimensions (maintain aspect ratio)
+            let width = img.width;
+            let height = img.height;
+            const maxDimension = 800; // Maximum width/height
+
+            if (width > height) {
+                if (width > maxDimension) {
+                    height *= maxDimension / width;
+                    width = maxDimension;
+                }
+            } else {
+                if (height > maxDimension) {
+                    width *= maxDimension / height;
+                    height = maxDimension;
+                }
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+
+            // Draw and compress
+            ctx.drawImage(img, 0, 0, width, height);
+
+            // Try different quality levels until we get under maxSizeMB
+            let quality = 0.7;
+            let result = canvas.toDataURL('image/jpeg', quality);
+
+            while ((result.length * 3 / 4) / (1024 * 1024) > maxSizeMB && quality > 0.1) {
+                quality -= 0.1;
+                result = canvas.toDataURL('image/jpeg', quality);
+            }
+
+            resolve(result);
+        };
+        img.onerror = reject;
+        img.src = base64;
+    });
 }
 
 async function saveThemeSettings() {
