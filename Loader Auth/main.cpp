@@ -4,6 +4,7 @@
 #include <wininet.h>
 #include <sstream>
 #include <ctime>
+#include <vector>
 
 #pragma comment(lib, "wininet.lib")
 
@@ -390,6 +391,130 @@ int main() {
         
         // Your application logic here
         cout << "\n[INFO] Your HWID: " << GetHWID() << endl;
+        
+        // === NOVO: Menu de Injeção ===
+        cout << "\n=== Injection Menu ===" << endl;
+        cout << "1. Inject Payload (Download from server)" << endl;
+        cout << "2. Skip injection" << endl;
+        cout << "Choose option: ";
+        
+        int injectChoice;
+        cin >> injectChoice;
+        cin.ignore();
+        
+        if (injectChoice == 1) {
+            cout << "\n[*] Preparing to inject payload..." << endl;
+            cout << "Product Name (must match uploaded file): ";
+            string productName;
+            getline(cin, productName);
+            
+            cout << "[*] Requesting payload from server..." << endl;
+            
+            string hwid = GetHWID();
+            string postData = "{\"appId\":\"" + appId + "\",\"key\":\"" + licenseKey + 
+                              "\",\"hwid\":\"" + hwid + "\",\"productName\":\"" + productName + 
+                              "\",\"session_id\":\"" + sessionId + "\"}";
+            
+            string response = HttpRequest(API_URL + "/auth/payload/stream", "POST", postData);
+            
+            // Parse downloadUrl
+            size_t pos = response.find("\"downloadUrl\":\"");
+            if (pos != string::npos) {
+                pos += 15;
+                size_t endPos = response.find("\"", pos);
+                string downloadUrl = response.substr(pos, endPos - pos);
+                
+                cout << "[+] Payload URL obtained (expires in 30 seconds)" << endl;
+                cout << "[*] Downloading payload..." << endl;
+                
+                // Download file
+                HINTERNET hInternet = InternetOpenA("ScarletLoader/1.0", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+                if (hInternet) {
+                    HINTERNET hUrl = InternetOpenUrlA(hInternet, downloadUrl.c_str(), NULL, 0, 
+                        INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE, 0);
+                    
+                    if (hUrl) {
+                        // Read file into memory
+                        vector<char> fileData;
+                        char buffer[4096];
+                        DWORD bytesRead;
+                        
+                        while (InternetReadFile(hUrl, buffer, sizeof(buffer), &bytesRead) && bytesRead > 0) {
+                            fileData.insert(fileData.end(), buffer, buffer + bytesRead);
+                        }
+                        
+                        InternetCloseHandle(hUrl);
+                        
+                        if (!fileData.empty()) {
+                            cout << "[+] Payload downloaded (" << fileData.size() << " bytes)" << endl;
+                            
+                            // Save to temp file for execution
+                            string tempPath = getenv("TEMP");
+                            tempPath += "\\payload_temp.exe";
+                            
+                            FILE* fp = fopen(tempPath.c_str(), "wb");
+                            if (fp) {
+                                fwrite(fileData.data(), 1, fileData.size(), fp);
+                                fclose(fp);
+                                
+                                cout << "[*] Executing payload..." << endl;
+                                
+                                // Execute
+                                STARTUPINFOA si;
+                                PROCESS_INFORMATION pi;
+                                ZeroMemory(&si, sizeof(si));
+                                si.cb = sizeof(si);
+                                ZeroMemory(&pi, sizeof(pi));
+                                
+                                if (CreateProcessA(tempPath.c_str(), NULL, NULL, NULL, FALSE, 
+                                    CREATE_NEW_CONSOLE, NULL, NULL, &si, &pi)) {
+                                    
+                                    SetConsoleColor(10);
+                                    cout << "[+] Payload injected successfully!" << endl;
+                                    SetConsoleColor(7);
+                                    
+                                    CloseHandle(pi.hProcess);
+                                    CloseHandle(pi.hThread);
+                                    
+                                    // Optional: Delete temp file after short delay
+                                    Sleep(2000);
+                                    DeleteFileA(tempPath.c_str());
+                                } else {
+                                    SetConsoleColor(12);
+                                    cout << "[-] Failed to execute payload!" << endl;
+                                    SetConsoleColor(7);
+                                }
+                            } else {
+                                SetConsoleColor(12);
+                                cout << "[-] Failed to write temp file!" << endl;
+                                SetConsoleColor(7);
+                            }
+                        } else {
+                            SetConsoleColor(12);
+                            cout << "[-] Failed to download payload!" << endl;
+                            SetConsoleColor(7);
+                        }
+                    } else {
+                        SetConsoleColor(12);
+                        cout << "[-] Failed to connect to download URL!" << endl;
+                        SetConsoleColor(7);
+                    }
+                    
+                    InternetCloseHandle(hInternet);
+                } else {
+                    SetConsoleColor(12);
+                    cout << "[-] Failed to initialize download!" << endl;
+                    SetConsoleColor(7);
+                }
+            } else {
+                SetConsoleColor(12);
+                cout << "[-] Failed to get payload URL. Make sure the product file is uploaded." << endl;
+                cout << "    Response: " << response << endl;
+                SetConsoleColor(7);
+            }
+        } else {
+            cout << "[*] Skipping injection..." << endl;
+        }
     }
     else {
         SetConsoleColor(12); // Red

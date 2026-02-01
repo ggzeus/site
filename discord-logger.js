@@ -475,10 +475,66 @@ async function logUserRegister(data) {
 }
 
 // ========================================
+// LOGS DE PAYLOADS (LOADER)
+// ========================================
+
+async function logPayloadUpload(data) {
+    const { appId, appName, productName, fileName, fileSize, username, uploadPath } = data;
+
+    const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
+
+    return sendDiscordLog('logs-apps', {
+        title: '📤 Payload Uploaded',
+        color: COLORS.SUCCESS,
+        fields: [
+            { name: '📱 Aplicação', value: `\`${appName || appId}\``, inline: true },
+            { name: '📦 Produto', value: `\`${productName}\``, inline: true },
+            { name: '👤 Uploader', value: `\`${username}\``, inline: true },
+            { name: '📄 Arquivo', value: `\`${fileName}\``, inline: true },
+            { name: '💾 Tamanho', value: `\`${fileSizeMB} MB\``, inline: true },
+            { name: '📍 Path', value: `\`${uploadPath}\``, inline: false }
+        ]
+    });
+}
+
+async function logPayloadDownload(data) {
+    const { appId, appName, productName, key, hwid, ip } = data;
+
+    return sendDiscordLog('logs-inject', {
+        title: '📥 Payload Downloaded',
+        color: COLORS.INFO,
+        fields: [
+            { name: '📱 Aplicação', value: `\`${appName || appId}\``, inline: true },
+            { name: '📦 Produto', value: `\`${productName}\``, inline: true },
+            { name: '🔑 Key', value: `\`${key}\``, inline: true },
+            { name: '💻 HWID', value: `\`${hwid ? hwid.substring(0, 16) + '...' : 'N/A'}\``, inline: true },
+            { name: '🌐 IP', value: `\`${ip}\``, inline: true }
+        ]
+    });
+}
+
+async function logSuspiciousHWIDAccess(data) {
+    const { appId, appName, hwid, ip, endpoint, reason } = data;
+
+    return sendDiscordLog('inject', {
+        title: '🚨 HWID NÃO REGISTRADO',
+        color: COLORS.ERROR,
+        fields: [
+            { name: '⚠️ Motivo', value: `\`${reason}\``, inline: false },
+            { name: '📱 Aplicação', value: `\`${appName || appId}\``, inline: true },
+            { name: '🔌 Endpoint', value: `\`${endpoint}\``, inline: true },
+            { name: '💻 HWID', value: `\`${hwid ? hwid.substring(0, 32) + '...' : 'N/A'}\``, inline: false },
+            { name: '🌐 IP', value: `\`${ip}\``, inline: true }
+        ]
+    });
+}
+
+// ========================================
 // UTILITÁRIOS
 // ========================================
 
 function detectSQLInjection(input) {
+
     if (!input) return false;
 
     const sqlPatterns = [
@@ -515,6 +571,9 @@ module.exports = {
     logFeedPost,
     logSuspiciousApplicationAccess,
     logSuspiciousInjectAccess,
+    logPayloadUpload,
+    logPayloadDownload,
+    logSuspiciousHWIDAccess,
     logApiCall,
     logSiteAccess,
     logUserLogin,
@@ -523,3 +582,4 @@ module.exports = {
     COLORS,
     DISCORD_CHANNELS
 };
+

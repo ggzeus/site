@@ -29,7 +29,7 @@ const isPartner = async (req, res, next) => {
         const doc = await db.collection('users').doc(String(userId)).get();
         if (!doc.exists) return res.status(401).json({ message: "User not found" });
         const data = doc.data();
-        if (data.role !== 'partner' && data.role !== 'admin') {
+        if (data.role !== 'partner' && data.role !== 'admin' && data.role !== 'founder') {
             return res.status(403).json({ message: "Access Denied: Partner Only" });
         }
         req.userRole = data.role; // Pass role to next handler
@@ -95,7 +95,7 @@ router.get('/api/app/list/:userId', async (req, res) => {
         const userRole = userData.role || 'user';
 
         // Check if user has permission (must be partner or admin)
-        if (userRole !== 'partner' && userRole !== 'admin') {
+        if (userRole !== 'partner' && userRole !== 'admin' && userRole !== 'founder') {
             // Log suspicious access - unauthorized role
             discordLogger.logSuspiciousApplicationAccess({
                 userId: userId,
@@ -677,4 +677,417 @@ router.get('/api/app/:appId/logs', async (req, res) => {
 });
 
 
+// --- LOADER SPECIFIC APIs ---
+
+// 8. Upload Secure Payload (exe/dll) to Firebase Storage
+router.post('/auth/payload/upload', isPartner, async (req, res) => {
+    const { userId, appId, productName, fileData, fileName } = req.body;
+
+    if (!appId || !productName || !fileData || !fileName) {
+        return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    try {
+        // Verify app ownership
+        const appDoc = await db.collection('applications').doc(appId).get();
+        if (!appDoc.exists) {
+            return res.status(404).json({ success: false, message: "Application not found" });
+        }
+
+        const appData = appDoc.data();
+        if (appData.ownerId !== String(userId)) {
+            return res.status(403).json({ success: false, message: "Not application owner" });
+        }
+
+        // Validate file extension
+        const allowedExtensions = ['.exe', '.dll'];
+        const fileExt = fileName.toLowerCase().substring(fileName.lastIndexOf('.'));
+        if (!allowedExtensions.includes(fileExt)) {
+            return res.status(400).json({ success: false, message: "Only .exe and .dll files allowed" });
+        }
+
+        // Decode base64 file data
+        const buffer = Buffer.from(fileData, 'base64');
+
+        // Get Firebase Storage bucket
+        let bucket;
+        try {
+            bucket = admin.storage().bucket();
+        } catch (bucketError) {
+            console.error("Firebase Storage bucket error:", bucketError);
+            return res.status(500).json({
+                success: false,
+                message: "Firebase Storage not configured",
+                error: "Please enable Firebase Storage in your Firebase Console and ensure the storageBucket is correctly set in firebase-service-account.json"
+            });
+        }
+
+        const storagePath = `payloads/${appId}/${productName}${fileExt}`;
+        const file = bucket.file(storagePath);
+
+        // Upload to Firebase Storage with metadata
+        try {
+            await file.save(buffer, {
+                metadata: {
+                    contentType: fileExt === '.exe' ? 'application/x-msdownload' : 'application/x-dll',
+                    metadata: {
+                        uploadedBy: userId,
+                        productName: productName,
+                        appId: appId,
+                        uploadedAt: new Date().toISOString()
+                    }
+                }
+            });
+
+            // Make file accessible (but only via signed URLs for security)
+            await file.makePrivate();
+        } catch (uploadError) {
+            console.error("File upload error:", uploadError);
+
+            // Check if it's a bucket not found error
+            if (uploadError.message && uploadError.message.includes('bucket does not exist')) {
+                return res.status(500).json({
+                    success: false,
+                    message: "Firebase Storage bucket not found",
+                    error: "Please enable Firebase Storage in your Firebase Console. Go to Storage > Get Started to create a bucket."
+                });
+            }
+
+            return res.status(500).json({
+                success: false,
+                message: "Upload failed",
+                error: uploadError.message
+            });
+        }
+
+        // Log upload to Discord
+        const userDoc = await db.collection('users').doc(String(userId)).get();
+        const username = userDoc.exists ? userDoc.data().username : 'Unknown';
+
+        discordLogger.logPayloadUpload({
+            appId: appId,
+            appName: appData.name,
+            productName: productName,
+            fileName: fileName,
+            fileSize: buffer.length,
+            username: username,
+            uploadPath: storagePath
+        }).catch(err => console.error('[PAYLOAD-UPLOAD-LOG] Error:', err));
+
+        res.json({
+            success: true,
+            message: "Payload uploaded successfully",
+            storagePath: storagePath,
+            fileSize: buffer.length
+        });
+
+    } catch (e) {
+        console.error("Payload Upload Error:", e);
+        res.status(500).json({ success: false, message: "Upload failed", error: e.message });
+    }
+});
+
+// 8.5. Get Uploaded Files Metadata
+router.get('/api/app/:appId/files', async (req, res) => {
+    const { appId } = req.params;
+
+    try {
+        // Get Firebase Storage bucket
+        const bucket = admin.storage().bucket();
+
+        // Check if bucket exists and get files
+        let files = [];
+        try {
+            [files] = await bucket.getFiles({ prefix: `payloads/${appId}/` });
+        } catch (bucketError) {
+            // If bucket doesn't exist or there's an access error, return empty list
+            console.warn(`Storage bucket error for app ${appId}:`, bucketError.message);
+            return res.json({ success: true, files: [] });
+        }
+
+        // If no files found, return empty array
+        if (!files || files.length === 0) {
+            return res.json({ success: true, files: [] });
+        }
+
+        const filesList = await Promise.all(files.map(async (file) => {
+            try {
+                const [metadata] = await file.getMetadata();
+                const fileName = file.name.split('/').pop();
+
+                return {
+                    name: fileName,
+                    fullPath: file.name,
+                    size: parseInt(metadata.size),
+                    contentType: metadata.contentType,
+                    uploadedAt: metadata.metadata?.uploadedAt || metadata.timeCreated,
+                    uploadedBy: metadata.metadata?.uploadedBy || 'Unknown',
+                    productName: metadata.metadata?.productName || fileName.replace(/\.(exe|dll)$/, '')
+                };
+            } catch (fileError) {
+                console.error(`Error getting metadata for file ${file.name}:`, fileError);
+                return null;
+            }
+        }));
+
+        // Filter out any null entries from failed metadata fetches
+        const validFiles = filesList.filter(f => f !== null);
+
+        // Sort by upload date (newest first)
+        validFiles.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+
+        res.json({ success: true, files: validFiles });
+    } catch (e) {
+        console.error("Get Files Error:", e);
+        res.status(500).json({ success: false, message: "Error fetching files", error: e.message });
+    }
+});
+
+// 9. Stream/Download Secure Payload (for authenticated loaders)
+router.post('/auth/payload/stream', async (req, res) => {
+    const { appId, key, hwid, productName, session_id } = req.body;
+
+    if (!appId || !productName || (!key && !hwid)) {
+        return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    try {
+        // Verify license validity (key or hwid)
+        let keyData = null;
+        let keyDoc = null;
+
+        if (key) {
+            const keySnapshot = await db.collection('app_keys')
+                .where('appId', '==', appId)
+                .where('key', '==', key)
+                .limit(1)
+                .get();
+
+            if (keySnapshot.empty) {
+                return res.status(404).json({ success: false, message: "Key not found" });
+            }
+
+            keyDoc = keySnapshot.docs[0];
+            keyData = keyDoc.data();
+        } else if (hwid) {
+            const hwidSnapshot = await db.collection('app_keys')
+                .where('appId', '==', appId)
+                .where('hwid', '==', hwid)
+                .limit(1)
+                .get();
+
+            if (hwidSnapshot.empty) {
+                return res.status(404).json({ success: false, message: "HWID not registered" });
+            }
+
+            keyDoc = hwidSnapshot.docs[0];
+            keyData = keyDoc.data();
+        }
+
+        // Check if key is used and not expired
+        if (keyData.status !== 'used') {
+            return res.status(403).json({ success: false, message: "Key not activated" });
+        }
+
+        if (keyData.expires_at) {
+            const now = new Date();
+            const expires = new Date(keyData.expires_at);
+            if (expires < now) {
+                return res.status(403).json({ success: false, message: "Subscription expired" });
+            }
+        }
+
+        // HWID verification if provided
+        if (hwid && keyData.hwid && keyData.hwid !== hwid) {
+            return res.status(403).json({ success: false, message: "HWID mismatch" });
+        }
+
+        // Generate signed URL for download (valid for 5 minutes)
+        const bucket = admin.storage().bucket();
+
+        // Try .exe first, then .dll
+        let file = bucket.file(`payloads/${appId}/${productName}.exe`);
+        let exists = await file.exists();
+
+        if (!exists[0]) {
+            file = bucket.file(`payloads/${appId}/${productName}.dll`);
+            exists = await file.exists();
+        }
+
+        if (!exists[0]) {
+            return res.status(404).json({ success: false, message: "Payload not found for this product" });
+        }
+
+        // Generate signed URL (30 seconds expiry)
+        const [signedUrl] = await file.getSignedUrl({
+            action: 'read',
+            expires: Date.now() + 30 * 1000 // 30 seconds
+        });
+
+        // Log download to Discord
+        const appDoc = await db.collection('applications').doc(appId).get();
+        const appName = appDoc.exists ? appDoc.data().name : appId;
+
+        discordLogger.logPayloadDownload({
+            appId: appId,
+            appName: appName,
+            productName: productName,
+            key: keyData.key,
+            hwid: hwid || keyData.hwid,
+            ip: req.ip || req.connection.remoteAddress
+        }).catch(err => console.error('[PAYLOAD-DOWNLOAD-LOG] Error:', err));
+
+        res.json({
+            success: true,
+            message: "Payload ready",
+            downloadUrl: signedUrl,
+            expiresIn: 30 // seconds
+        });
+
+    } catch (e) {
+        console.error("Payload Stream Error:", e);
+        res.status(500).json({ success: false, message: "Stream failed", error: e.message });
+    }
+});
+
+// 10. Get User Info by HWID (for remote applications without auth system)
+router.get('/auth/get-user/:appId/:hwid', async (req, res) => {
+    const { appId, hwid } = req.params;
+    const { appSecret } = req.query;
+
+    if (!appId || !appSecret || !hwid) {
+        return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    try {
+        // Verify app exists and secret matches
+        const appDoc = await db.collection('applications').doc(appId).get();
+        if (!appDoc.exists) {
+            return res.status(404).json({ success: false, message: "Application not found" });
+        }
+
+        const appData = appDoc.data();
+        if (appData.secret !== appSecret) {
+            return res.status(403).json({ success: false, message: "Invalid app secret" });
+        }
+
+        // Search for user by HWID
+        const keySnapshot = await db.collection('app_keys')
+            .where('appId', '==', appId)
+            .where('hwid', '==', hwid)
+            .limit(1)
+            .get();
+
+        if (keySnapshot.empty) {
+            // Log suspicious access - unregistered HWID
+            discordLogger.logSuspiciousHWIDAccess({
+                appId: appId,
+                appName: appData.name,
+                hwid: hwid,
+                ip: req.ip || req.connection.remoteAddress,
+                endpoint: '/auth/get-user',
+                reason: 'HWID não registrado'
+            }).catch(err => console.error('[SUSPICIOUS-HWID-LOG] Error:', err));
+
+            return res.status(404).json({ success: false, message: "HWID not registered" });
+        }
+
+        const keyDoc = keySnapshot.docs[0];
+        const keyData = keyDoc.data();
+
+        // Get username from linked user or use key as username
+        let username = keyData.key; // Default to key
+        if (keyData.linked_user_id) {
+            const userDoc = await db.collection('app_users').doc(keyData.linked_user_id).get();
+            if (userDoc.exists) {
+                username = userDoc.data().username;
+            }
+        }
+
+        res.json({
+            success: true,
+            username: username,
+            created_at: keyData.activated_at || keyData.created_at
+        });
+
+    } catch (e) {
+        console.error("GetUser Error:", e);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+// 11. Get Expiry Info by HWID (for remote applications without auth system)
+router.get('/auth/get-expiry/:appId/:hwid', async (req, res) => {
+    const { appId, hwid } = req.params;
+    const { appSecret } = req.query;
+
+    if (!appId || !appSecret || !hwid) {
+        return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    try {
+        // Verify app exists and secret matches
+        const appDoc = await db.collection('applications').doc(appId).get();
+        if (!appDoc.exists) {
+            return res.status(404).json({ success: false, message: "Application not found" });
+        }
+
+        const appData = appDoc.data();
+        if (appData.secret !== appSecret) {
+            return res.status(403).json({ success: false, message: "Invalid app secret" });
+        }
+
+        // Search for user by HWID
+        const keySnapshot = await db.collection('app_keys')
+            .where('appId', '==', appId)
+            .where('hwid', '==', hwid)
+            .limit(1)
+            .get();
+
+        if (keySnapshot.empty) {
+            // Log suspicious access - unregistered HWID
+            discordLogger.logSuspiciousHWIDAccess({
+                appId: appId,
+                appName: appData.name,
+                hwid: hwid,
+                ip: req.ip || req.connection.remoteAddress,
+                endpoint: '/auth/get-expiry',
+                reason: 'HWID não registrado'
+            }).catch(err => console.error('[SUSPICIOUS-HWID-LOG] Error:', err));
+
+            return res.status(404).json({ success: false, message: "HWID not registered" });
+        }
+
+        const keyDoc = keySnapshot.docs[0];
+        const keyData = keyDoc.data();
+
+        // Calculate expiry info
+        const now = new Date();
+        const expires = keyData.expires_at ? new Date(keyData.expires_at) : null;
+
+        let daysRemaining = null;
+        let isExpired = false;
+
+        if (expires) {
+            daysRemaining = Math.max(0, Math.ceil((expires - now) / (1000 * 60 * 60 * 24)));
+            isExpired = expires < now;
+        }
+
+        res.json({
+            success: true,
+            expires_at: keyData.expires_at,
+            days_remaining: daysRemaining,
+            is_expired: isExpired,
+            subscription_type: keyData.type || 'license',
+            level: keyData.level || 1
+        });
+
+    } catch (e) {
+        console.error("GetExpiry Error:", e);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+
 module.exports = router;
+

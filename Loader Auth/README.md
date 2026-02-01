@@ -1,57 +1,120 @@
 # Scarlet Auth Loader (C++)
 
 ## Descrição
-Loader básico de autenticação em C++ que se conecta ao sistema Scarlet Auth via HTTP.
-
-## Funcionalidades
-- ✅ Inicialização de sessão com o servidor
+Sistema completo de autenticação com suporte a:
 - ✅ Login com usuário/senha
-- ✅ Ativação via License Key
+- ✅ Ativação via License Key  
 - ✅ Detecção de HWID automática
+- ✅ **Injeção de Payload** (baixa e executa .exe/.dll do servidor)
 - ✅ Interface colorida no console
 
-## Como Compilar
+## Arquivos
 
-### Visual Studio (Recomendado)
-1. Abra o Visual Studio
-2. Crie um novo projeto "Console App" (C++)
-3. Copie o código de `main.cpp` para o projeto
-4. Compile em Release mode (x64)
+### main.cpp
+Loader principal com sistema completo de autenticação e injeção de payloads.
 
-### MinGW/G++
+**Funcionalidades**:
+- Inicialização de sessão
+- Login/Ativação de key
+- Download e execução de payloads da API
+- Registro de componentes de hardware
+
+### index.cpp  
+Aplicação standalone que busca informações do usuário usando apenas HWID.
+
+**Uso**: Perfeito para menus externos que não têm acesso ao código do loader, mas precisam exibir nome do usuário e dias restantes.
+
+### Compilação
+
+#### Compilar Loader Principal (main.cpp)
 ```bash
-g++ main.cpp -o ScarletLoader.exe -lwininet -static
+compile.bat
 ```
+Gera: `ScarletLoader.exe`
 
-## Configuração
-
-Antes de compilar, edite as seguintes constantes no `main.cpp`:
-
-```cpp
-const string OWNER_ID = "YOUR_OWNER_ID";      // Seu User ID
-const string APP_SECRET = "YOUR_APP_SECRET";  // Secret da sua aplicação
-const string API_URL = "http://localhost";    // URL do servidor
+#### Compilar Menu Fetcher (index.cpp)
+```bash
+compile_index.bat
 ```
-
-Além disso, substitua `YOUR_APP_ID` nas funções `Login()` e `CheckLicense()` pelo ID da sua aplicação criada no painel.
+Gera: `ScarletMenuFetcher.exe`
 
 ## Como Usar
 
-1. Execute o `ScarletLoader.exe`
-2. Escolha uma opção:
-   - **1**: Login com usuário/senha
-   - **2**: Ativar com License Key
-3. Insira as credenciais
-4. Se autenticado, o loader carrega a aplicação
+### 1. Configurar Credenciais
 
-## Notas de Segurança
+Em ambos os arquivos (`main.cpp` e `index.cpp`), configure:
 
-⚠️ **IMPORTANTE**: Este é um exemplo básico para demonstração. Para produção, considere:
-- Ofuscar strings sensíveis (APP_SECRET, API_URL)
-- Implementar criptografia nas requisições
-- Adicionar anti-debug e anti-tamper
-- Usar HTTPS em produção
+```cpp
+const string API_URL = "http://your-server.com"; // Seu servidor
+const string APP_ID = "your-app-id";
+const string APP_SECRET = "your-app-secret";
+const string OWNER_ID = "your-user-id";
+```
 
-## Dependências
-- Windows API (WinINet para HTTP requests)
-- C++11 ou superior
+### 2. Fazer Upload do Payload
+
+1. Acesse o dashboard Partner → Minhas Aplicações
+2. Clique em GERENCIAR na sua aplicação
+3. Vá para a tab **Files**
+4. Clique em **Upload File**
+5. Preencha o nome do produto (ex: "MyCheat")
+6. Selecione o arquivo .exe ou .dll
+7. Aguarde o upload completar
+
+### 3. Executar o Loader (main.cpp)
+
+```
+1. Escolher Login ou License Key
+2. Após autenticar, escolher "Inject Payload"
+3. Inserir o nome do produto (deve ser EXATO ao nome usado no upload)
+4. Aguardar download e execução
+```
+
+O loader irá:
+- Baixar o payload do Firebase Storage via URL assinada (30s de expiração)
+- Salvar temporariamente em `%TEMP%\payload_temp.exe`
+- Executar o payload
+- Deletar o arquivo temporário
+
+### 4. Executar o Menu Fetcher (index.cpp)
+
+```
+Simplesmente execute ScarletMenuFetcher.exe
+```
+
+O aplicativo irá:
+- Detectar o HWID automaticamente
+- Fazer chamadas GET às APIs:
+  - `/auth/get-user/:appId/:hwid?appSecret=xxx`
+  - `/auth/get-expiry/:appId/:hwid?appSecret=xxx`
+- Exibir nome do usuário, dias restantes e level
+
+**Importante**: O usuário deve ter feito login pelo menos uma vez pelo loader principal para que o HWID esteja registrado.
+
+## Fluxo de Uso Completo
+
+```
+1. Usuário executa ScarletLoader.exe (main.cpp)
+2. Faz login ou ativa key
+3. Escolhe "Inject Payload"
+4. Insere nome do produto
+5. Payload é baixado e executado
+
+6. [SEPARADAMENTE] Menu/Aplicação externa executa
+7. Chama as APIs GET com o HWID
+8. Exibe nome e informações do usuário
+```
+
+## Segurança
+
+- ✅ URLs de download expiram em 30 segundos
+- ✅ Downloads são verificados por HWID + Key válida
+- ✅ Todos os acessos são logados no Discord
+- ✅ HWIDs desconhecidos são reportados como suspeitos
+- ✅ Arquivos armazenados de forma segura no Firebase Storage
+
+## Observações
+
+- **Payload executável**: Por padrão, o loader executa o .exe baixado em um novo processo. Para DLL injection, será necessário implementar lógica adicional de LoadLibrary ou manual mapping.
+- **Detecção de antivírus**: Como o payload é baixado e executado em runtime, alguns antivírus podem flaggar. Considere assinar digitalmente os executáveis.
+- **Nome do produto**: Deve ser EXATO ao usado no upload (case-sensitive).

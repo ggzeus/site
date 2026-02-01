@@ -2,7 +2,7 @@
 // Se estiver rodando localmente (localhost), usa caminho relativo (ou http://localhost:3000)
 // Se estiver em produção (Netlify), DEVE ser a URL do seu backend no Render/Railway
 const API_BASE_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-    ? ''
+    ? 'http://localhost:80' // Point to Backend Port (80 default)
     : 'https://zeus-scarlet.netlify.app'; // PRODUÇÃO: URL do Backend Netlify
 
 let currentMode = 'login';
@@ -1928,6 +1928,7 @@ async function openAppDashboard(appId, appName) {
         <div class="app-dashboard-tabs" style="display:flex; gap:10px; border-bottom:1px solid #333; padding-bottom:10px; margin-bottom:20px;">
             <button class="subtab-btn active" onclick="switchAppTab('overview', this)">Visão Geral</button>
             <button class="subtab-btn" onclick="switchAppTab('keys', this)">Keys</button>
+            <button class="subtab-btn" onclick="switchAppTab('files', this)">Files</button>
             <button class="subtab-btn" onclick="switchAppTab('users', this)">Usuários</button>
             <button class="subtab-btn" onclick="switchAppTab('logs', this)">Logs</button>
             <button class="subtab-btn" onclick="switchAppTab('settings', this)">Configurações</button>
@@ -1955,6 +1956,7 @@ async function switchAppTab(tab, btnElement) {
     // Load Content
     if (tab === 'overview') await loadAppOverview(currentAppId, container);
     if (tab === 'keys') await loadAppKeys(currentAppId, container);
+    if (tab === 'files') await loadAppFiles(currentAppId, container);
     if (tab === 'users') await loadAppUsers(currentAppId, container);
     if (tab === 'logs') await loadAppLogs(currentAppId, container);
     if (tab === 'settings') await loadAppSettings(currentAppId, container);
@@ -2503,7 +2505,237 @@ function filterUsers(query) {
     renderUsersTable(filtered);
 }
 
+// --- FILES UI (Upload Payloads) ---
+async function loadAppFiles(appId, container) {
+    container.innerHTML = `
+        <div class="ka-container">
+            <div class="ka-action-bar">
+                <h3><i class="fa-solid fa-file-code"></i> Payload Files</h3>
+                <button class="ka-btn ka-btn-primary" onclick="openUploadFileModal('${appId}')">
+                    <i class="fa-solid fa-upload"></i> Upload File
+                </button>
+            </div>
+
+            <div id="filesListContainer" style="margin-top:20px;">
+                <div style="text-align:center; padding:40px; color:#888;">
+                    <i class="fa-solid fa-spinner fa-spin" style="font-size:2rem;"></i>
+                    <p>Loading files...</p>
+                </div>
+            </div>
+        </div>
+    `;
+
+    try {
+        const res = await fetch(`/api/app/${appId}/files`);
+        const data = await res.json();
+
+        const filesContainer = document.getElementById('filesListContainer');
+
+        if (!data.success || !data.files || data.files.length === 0) {
+            filesContainer.innerHTML = `
+                <div style="text-align:center; padding:40px; color:#666;">
+                    <i class="fa-solid fa-folder-open" style="font-size:3rem; margin-bottom:15px; opacity:0.3;"></i>
+                    <p>Nenhum arquivo enviado ainda.</p>
+                    <p style="font-size:0.85rem; color:#555;">Clique em "Upload File" para enviar seu primeiro payload.</p>
+                </div>
+            `;
+            return;
+        }
+
+        // Render files list
+        filesContainer.innerHTML = data.files.map(file => {
+            const sizeInMB = (file.size / (1024 * 1024)).toFixed(2);
+            const uploadDate = new Date(file.uploadedAt).toLocaleString();
+            const fileType = file.name.endsWith('.exe') ? 'EXE' : 'DLL';
+            const typeColor = file.name.endsWith('.exe') ? '#00bd9d' : '#ffaa00';
+
+            return `
+                <div class="keyauth-card" style="margin-bottom:15px;">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                        <div style="flex:1;">
+                            <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                                <i class="fa-solid fa-file-code" style="font-size:1.5rem; color:${typeColor};"></i>
+                                <div>
+                                    <h4 style="margin:0; font-size:1.1rem; color:#fff;">${file.productName || file.name}</h4>
+                                    <small style="color:#666; font-family:monospace;">${file.name}</small>
+                                </div>
+                            </div>
+
+                            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px,1fr)); gap:15px; margin-top:15px">
+                                <div class="keyauth-detail-group">
+                                    <span class="keyauth-label">Tipo</span>
+                                    <div style="color:${typeColor}; font-weight:600; font-family:'JetBrains Mono', monospace;">${fileType}</div>
+                                </div>
+                                <div class="keyauth-detail-group">
+                                    <span class="keyauth-label">Tamanho</span>
+                                    <div style="color:#fff; font-weight:600; font-family:'JetBrains Mono', monospace;">${sizeInMB} MB</div>
+                                </div>
+                                <div class="keyauth-detail-group">
+                                    <span class="keyauth-label">Upload</span>
+                                    <div style="color:#aaa; font-size:0.85rem;">${uploadDate}</div>
+                                </div>
+                                <div class="keyauth-detail-group">
+                                    <span class="keyauth-label">Enviado por</span>
+                                    <div style="color:#aaa;">${file.uploadedBy}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+    } catch (e) {
+        console.error(e);
+        const filesContainer = document.getElementById('filesListContainer');
+        filesContainer.innerHTML = `
+            <div style="text-align:center; padding:40px; color:#f44;">
+                <i class="fa-solid fa-exclamation-triangle" style="font-size:2rem; margin-bottom:10px;"></i>
+                <p>Erro ao carregar arquivos</p>
+            </div>
+        `;
+    }
+}
+
+function openUploadFileModal(appId) {
+    const existing = document.getElementById('uploadFileModal');
+    if (existing) existing.remove();
+
+    const modalHtml = `
+    <div id="uploadFileModal" class="ka-modal-overlay">
+        <div class="ka-modal-content">
+            <div class="ka-modal-header">
+                <h3>Upload Payload File</h3>
+                <i class="fa-solid fa-xmark" style="cursor:pointer; color:#888;" onclick="this.closest('.ka-modal-overlay').remove()"></i>
+            </div>
+            <div class="ka-modal-body">
+                <div class="ka-form-group">
+                    <label>Product Name <span class="required">*</span></label>
+                    <input type="text" id="uploadProductName" placeholder="Ex: MyCheat">
+                    <small style="color:#666; font-size:0.7rem;">Nome do produto associado a este payload</small>
+                </div>
+
+                <div class="ka-form-group">
+                    <label>File (.exe or .dll) <span class="required">*</span></label>
+                    <input type="file" id="uploadFileInput" accept=".exe,.dll" style="color:#fff; padding:10px; background:#1a1a1a; border:1px solid #333; border-radius:4px; width:100%;">
+                    <small style="color:#666; font-size:0.7rem;">Apenas arquivos .exe ou .dll são permitidos</small>
+                </div>
+
+                <div id="uploadProgress" style="display:none; margin-top:15px;">
+                    <div style="background:#222; height:6px; border-radius:3px; overflow:hidden;">
+                        <div id="uploadProgressBar" style="width:0%; height:100%; background:#00bd9d; transition:width 0.3s;"></div>
+                    </div>
+                    <p id="uploadStatus" style="margin-top:5px; font-size:0.8rem; color:#666;"></p>
+                </div>
+            </div>
+            <div class="ka-modal-footer">
+                <button class="ka-btn" onclick="document.getElementById('uploadFileModal').remove()">Cancel</button>
+                <button class="ka-btn ka-btn-primary" onclick="submitUploadFile('${appId}')">Upload</button>
+            </div>
+        </div>
+    </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+}
+
+async function submitUploadFile(appId) {
+    const productName = document.getElementById('uploadProductName').value.trim();
+    const fileInput = document.getElementById('uploadFileInput');
+    const file = fileInput.files[0];
+
+    if (!productName) {
+        alert('Por favor, insira o nome do produto.');
+        return;
+    }
+
+    if (!file) {
+        alert('Por favor, selecione um arquivo.');
+        return;
+    }
+
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext !== 'exe' && ext !== 'dll') {
+        alert('Apenas arquivos .exe ou .dll são permitidos.');
+        return;
+    }
+
+    try {
+        const uploadBtn = document.querySelector('#uploadFileModal .ka-btn-primary');
+        uploadBtn.innerText = "Uploading...";
+        uploadBtn.disabled = true;
+
+        const progressDiv = document.getElementById('uploadProgress');
+        const progressBar = document.getElementById('uploadProgressBar');
+        const statusText = document.getElementById('uploadStatus');
+
+        progressDiv.style.display = 'block';
+        statusText.innerText = 'Reading file...';
+
+        // Read file as base64
+        const reader = new FileReader();
+
+        reader.onload = async function (e) {
+            const base64Data = e.target.result.split(',')[1]; // Remove data:...;base64, prefix
+
+            statusText.innerText = 'Uploading to server...';
+            progressBar.style.width = '50%';
+
+            const res = await fetch('/auth/payload/upload', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: currentUser.id,
+                    appId: appId,
+                    productName: productName,
+                    fileName: file.name,
+                    fileData: base64Data
+                })
+            });
+
+            const data = await res.json();
+
+            if (res.ok && data.success) {
+                progressBar.style.width = '100%';
+                statusText.innerText = 'Upload complete!';
+
+                setTimeout(() => {
+                    showNotify('success', 'Arquivo enviado com sucesso!');
+                    document.getElementById('uploadFileModal').remove();
+
+                    // Reload files list
+                    const tabContent = document.getElementById('appTabContent');
+                    if (tabContent) {
+                        loadAppFiles(appId, tabContent);
+                    }
+                }, 500);
+            } else {
+                throw new Error(data.message || 'Upload failed');
+            }
+        };
+
+        reader.onerror = function () {
+            alert('Erro ao ler o arquivo.');
+            uploadBtn.innerText = "Upload";
+            uploadBtn.disabled = false;
+            progressDiv.style.display = 'none';
+        };
+
+        reader.readAsDataURL(file);
+
+    } catch (e) {
+        console.error(e);
+        alert('Erro ao enviar arquivo: ' + e.message);
+        const uploadBtn = document.querySelector('#uploadFileModal .ka-btn-primary');
+        if (uploadBtn) {
+            uploadBtn.innerText = "Upload";
+            uploadBtn.disabled = false;
+        }
+    }
+}
+
 async function loadAppSettings(appId, container) {
+
     container.innerHTML = `
         <h3>Configurações</h3>
         <div class="status-box">

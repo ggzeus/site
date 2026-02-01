@@ -3,13 +3,13 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const bodyParser = require('body-parser');
+const cors = require('cors'); // Add cors
 const bcrypt = require('bcrypt');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const admin = require("firebase-admin");
 const EfiPay = require('sdk-node-apis-efi');
-const cors = require('cors'); // Added CORS
 const CryptoJS = require('crypto-js');
 const { Client, GatewayIntentBits } = require('discord.js');
 const discordLogger = require('./discord-logger'); // Discord Logging System
@@ -19,10 +19,12 @@ const discordLogger = require('./discord-logger'); // Discord Logging System
 const serviceAccount = require("./firebase-service-account.json");
 
 admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
+    credential: admin.credential.cert(serviceAccount),
+    storageBucket: `${serviceAccount.project_id}.appspot.com`
 });
 
 const db = admin.firestore();
+
 
 
 const app = express();
@@ -101,6 +103,7 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 app.use(bodyParser.json({ limit: '50mb' }));
+app.use(cors()); // Enable CORS
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
 // --- DISCORD LOGGING MIDDLEWARES ---
